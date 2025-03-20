@@ -116,18 +116,26 @@ def _pivot_col_extended(T, basis, phase, tol=1e-9, pivot_method='bland', c=None)
             return False, np.nan
         return True, best_col
 
+
+
     elif pivot_method == 'steepest_edge':
-        # If c is None, fallback
+
+        if phase == 1:
+            return _pivot_col_extended(T, basis, phase, tol, 'largest_coefficient', c=c)
+
         if c is None:
             warn("No cost vector 'c' for steepest_edge. Fallback to largest_coefficient.")
             return _pivot_col_extended(T, basis, phase, tol, 'largest_coefficient')
-
-        best_score = None
-        best_col = None
+        fixed_size = T.shape[1] - 1
+        c_adj = c if len(c) == fixed_size else c[:fixed_size]
+        # Create a masked array for the objective row
+        ma = np.ma.masked_where(T[-1, :-1] >= -tol, T[-1, :-1], copy=False)
+        # Invert the mask to get indices where the objective row is negative
         col_candidates = np.nonzero(~ma.mask)[0]
         x_old = _current_solution_vector(T, basis, fixed_size=fixed_size)
-        norm_c = np.linalg.norm(c)
-
+        norm_c = np.linalg.norm(c_adj)
+        best_score = None
+        best_col = None
         for j in col_candidates:
             row_found, i = _pivot_row_candidate(T, j, phase, tol=tol)
             if not row_found:
@@ -137,19 +145,19 @@ def _pivot_col_extended(T, basis, phase, tol=1e-9, pivot_method='bland', c=None)
             norm_direction = np.linalg.norm(direction)
             if norm_direction < 1e-14:
                 continue
-            numerator = np.dot(c, direction)
+            numerator = np.dot(c_adj, direction)
             denom = norm_c * norm_direction
             score = numerator / denom
             if (best_score is None) or (score > best_score):
                 best_score = score
                 best_col = j
-
         if best_col is None:
             return False, np.nan
         return True, best_col
-
     # Fallback
     return _pivot_col_extended(T, basis, phase, tol, 'bland')
+
+
 
 def simplex_iteration_one_step(T, basis, phase, c, pivot_method='bland', tol=1e-9):
     """
@@ -210,7 +218,7 @@ class SimplexGymEnv(gym.Env):
         self._build_phase1_tableau()
 
         # Action space: 4 discrete pivot strategies
-        self.action_space = spaces.Discrete(3)
+        self.action_space = spaces.Discrete(4)
 
         # Define a fixed-size observation space to avoid shape mismatch
         max_rows = self.A.shape[0] + 2        # original constraints + 2 extra rows (obj and pseudo-obj)
@@ -292,7 +300,7 @@ class SimplexGymEnv(gym.Env):
             0: 'bland',
             1: 'largest_coefficient',
             2: 'largest_increase',
-            # 3: 'steepest_edge'
+            3: 'steepest_edge'
         }
         pivot_method = pivot_map.get(action, 'bland')
 
@@ -324,6 +332,8 @@ class SimplexGymEnv(gym.Env):
                 # Remove artificial columns
                 self.T = np.delete(self.T, self.av, axis=1)
                 self.phase = 2
+                # Update cost vector to include only original variable coefficients
+                self.c = self.c[:self.m]
 
         # Check iteration limit
         if self.nit >= self.maxiter and not self.done_flag:
