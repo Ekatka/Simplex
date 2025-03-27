@@ -32,7 +32,7 @@ def testing(base_matrix, epsilon=0.1):
         print(f"[RL Policy] Chosen pivot method: {chosen_method}")
         obs, reward, done, truncated, info = env.step(action)
 
-    print(f"[RL Policy] Pivot steps: {env.nit}")
+    print(f"[RL Policy] Pivot steps: {env.nit+1}")
     print(f"[RL Policy] Game value (v): {-env.T[-1, -1]:.6f}")
 
     for fixed_action in range(4):
@@ -53,8 +53,8 @@ def run_fixed_strategy(game_matrix, fixed_action):
         obs, reward, done, truncated, info = env.step(fixed_action)
 
     method = pivot_map[fixed_action]
-    print(f"[{method.title()} Pivot] Pivot steps: {env.nit}")
-    print(f"[{method.title()} Pivot] Game value (v): {-env.T[-1, -1]:.6f}")
+    print(f"[{method.title()} Pivot] Pivot steps: {env.nit+1}")
+    # print(f"[{method.title()} Pivot] Game value (v): {-env.T[-1, -1]:.6f}")
 
 
 if __name__ == "__main__":

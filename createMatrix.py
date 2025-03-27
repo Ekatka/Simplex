@@ -8,7 +8,7 @@ class Matrix:
 
     def generateMatrix(self):
         np.random.seed(44)
-        self.base_P = np.random.randint(-1, 2, size=(self.m, self.n))  # integer values in [-1, 1]
+        self.base_P = np.random.randint(-5, 6, size=(self.m, self.n))  # integer values in [-1, 1]
         return self.base_P
 
     def returnSize(self):

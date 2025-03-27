@@ -54,18 +54,19 @@ class RandomMatrixEnv(gym.Env):
         self.counter = 0;
 
     def _init_env(self, seed=None):
+        max_iter = 10
+        for i in range(max_iter):
+            perturbed_P = generate_perturbed_matrix(self.base_matrix, self.epsilon)
+            res = solve_zero_sum(perturbed_P)
+            if res is not None:
+                T, basis = res
+                self.env = PivotingEnv(T, basis)
+                if seed is not None:
+                    self.env.reset(seed=seed)
+                return
 
-        perturbed_P = generate_perturbed_matrix(self.base_matrix, self.epsilon)
-        # A = np.hstack([-perturbed_P.T, np.ones((n, 1))])
-        # b = np.zeros(n)
-        # c = np.hstack([np.zeros(m), -1])
-        # one_row = np.hstack([np.ones(m), [0]])
-        # A = np.vstack([A, one_row])
-        # b = np.append(b, [1])
-        T, basis = solve_zero_sum(perturbed_P)
-        self.env = PivotingEnv(T, basis)
-        if seed is not None:
-            self.env.reset(seed=seed)
+        print("too many unstable matricies")
+        raise RuntimeError
 
     def reset(self, seed=None, **kwargs):
         self._init_env()
@@ -79,7 +80,7 @@ if __name__ == "__main__":
     matrix = Matrix()
     base_P = matrix.generateMatrix()
     m, n = matrix.returnSize()
-    vec_env = make_vec_env(lambda: RandomMatrixEnv(base_P, epsilon=0.1), n_envs=4)
+    vec_env = make_vec_env(lambda: RandomMatrixEnv(base_P, epsilon=1), n_envs=4)
     model = PPO("MlpPolicy", vec_env, verbose=1)
-    model.learn(total_timesteps=1000000)
+    model.learn(total_timesteps=100000)
     model.save("ppo_simplex_random_10x10")
