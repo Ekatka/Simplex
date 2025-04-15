@@ -5,12 +5,13 @@ import scipy.sparse as sps
 from collections import namedtuple
 import gym
 from gym import spaces
+from stable_baselines3.common.type_aliases import GymEnv
 
 from _linprog_utils import (
     _parse_linprog, _presolve, _get_Abc, _LPProblem, _autoscale,
     _postsolve, _check_result, _display_summary)
 
-class PivotingEnv(gym.Env):
+class SecondPhasePivotingEnv(gym.Env):
 
     def remove_artificial(self):
         for pivrow in [row for row in range(self.basis.size)
@@ -42,7 +43,7 @@ class PivotingEnv(gym.Env):
             low=-np.inf, high=np.inf,
             shape=self.T.shape, dtype=np.float64
         )
-        self.complete = False;
+        self.complete = False
 
     def _get_obs(self):
         return self.T.copy()
@@ -52,7 +53,7 @@ class PivotingEnv(gym.Env):
         return self._get_obs(), {}
 
     def step(self, action):
-        strategy_map = {
+        strategy_map = { #initialize in beginning
             0: 'bland',
             1: 'largest_coefficient',
             2: 'largest_increase',
@@ -62,7 +63,7 @@ class PivotingEnv(gym.Env):
         done = False
         reward = -1  # Penalize per step only
 
-        pivcol_found, pivcol = _pivot_col_phase2(self.T, strategy=strategy,tol=self.tol )
+        pivcol_found, pivcol = _pivot_col_heuristics(self.T, strategy=strategy, tol=self.tol)
         if not pivcol_found:
             done = True
             return self._get_obs(), reward, done, False, {}
@@ -90,6 +91,68 @@ class PivotingEnv(gym.Env):
         pass
 
 
+class FirstPhasePivotingEnv(gym.Env):
+
+    def __init__(self, T, basis, nit0 = 0):
+        self.basis = basis
+        self.T = T
+        self.tol = 1e-9
+        self.maxiter = 5000
+        self.nit0 = nit0
+        self.action_space = spaces.Discrete(4)
+        self.status = None
+        self.observation_space = spaces.Box(
+            low=-np.inf, high=np.inf,
+            shape=self.T.shape, dtype=np.float64
+        )
+        self.complete = False
+
+    def _get_obs(self):
+        return self.T.copy()
+
+    def reset(self, seed=None, **kwargs):
+        self.nit = 0
+        self.status = None
+        return self._get_obs(), {}
+
+    def step(self, action):
+
+        strategy_map = {
+            0: 'bland',
+            1: 'largest_coefficient',
+            2: 'largest_increase',
+            3: 'steepest_edge'
+        }
+        strategy = strategy_map[int(action)]
+        reward = -1
+        done = False
+
+        pivcol_found, pivcol = _pivot_col_heuristics(self.T, strategy=strategy, tol=self.tol)
+        if not pivcol_found:
+            done = True
+            return self._get_obs(), reward, done, False, {}
+
+        pivrow_found, pivrow = _pivot_row(self.T, self.basis, pivcol, phase=1, tol=self.tol)
+        if not pivrow_found:
+            done = True
+            return self._get_obs(), reward, done, False, {}
+
+        _apply_pivot(self.T, self.basis, pivrow, pivcol, tol=self.tol)
+        self.nit += 1
+
+        if self.nit >= self.maxiter:
+            done = True
+
+        return self._get_obs(), reward, done, False, {}
+
+    def render(self, mode='human'):
+        print("Current Tableau:")
+        print(self.T)
+        print("Current Basis:", self.basis)
+        print("Iteration:", self.nit)
+
+    def close(self):
+        pass
 
 
 
@@ -132,7 +195,7 @@ def pivot_col_largest_increase(T, ma, tol=1e-9):
 
     return True, best_col
 
-def _pivot_col_phase2(T, strategy, tol=1e-9):
+def _pivot_col_heuristics(T, strategy, tol=1e-9):
     """
     Pick pivot column using one of the supported heuristics.
     """
@@ -226,7 +289,9 @@ def _apply_pivot(T, basis, pivrow, pivcol, tol=1e-9):
             "help reduce the issue.")
         warn(message, stacklevel=5)
 
-def phase1solver(T, n, basis,
+
+
+def phase1solver(T, basis,
                    maxiter=1000, tol=1e-9, nit0=0):
     nit = nit0
     status = 0
@@ -305,9 +370,13 @@ def solve_zero_sum(GameMatrix):
     row_pseudo_objective[av] = 0
     T = np.vstack((row_constraints, row_objective, row_pseudo_objective))
 
-    nit1, status = phase1solver(T, n, basis)
+    return T, basis, av
+
+
+def firstTosecond(T, basis, av):
+    #TODO split here
+    status = 0
     tol = tol=1e-9
-    nit2 = nit1
     if abs(T[-1, -1]) < tol:
         # Remove the pseudo-objective row from the tableau
         T = T[:-1, :]
@@ -350,13 +419,4 @@ if __name__ == '__main__':
                   [-2, 3],
                   ])
     solve_zero_sum(A)
-
-
-
-
-
-
-
-
-
 
