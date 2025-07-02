@@ -1,5 +1,27 @@
-# Zero sum games solver using gym environment
+# Zero sum game solver using gym environment
 
+## Installation
+
+Clone the directory
+```bash
+git clone https://github.com/Ekatka/Simplex.git
+cd Simplex
+```
+
+create the virtual environment
+```bash
+python -m venv venv
+source venv/bin/activate   
+```
+
+install requirements
+```bash
+pip install -r requirements.txt
+```
+
+Modify the `config.py` file according to desired training and run `training_ppo_simplex.py`
+
+## Documentation
 Project consists of five main files:
 
 - training_ppo_simplex.py - training agent
