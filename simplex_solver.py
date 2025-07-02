@@ -116,7 +116,7 @@ class FirstPhasePivotingEnv(gym.Env):
         return self._get_obs(), {}
 
     def step(self, action):
-
+    # according to the given strategy find pivot column and row and apply the pivot
         strategy_map = {
             0: 'bland',
             1: 'largest_coefficient',
@@ -143,6 +143,7 @@ class FirstPhasePivotingEnv(gym.Env):
         if self.nit >= self.maxiter:
             done = True
 
+        # return reward -1 for each step
         return self._get_obs(), reward, done, False, {}
 
     def render(self, mode='human'):
@@ -333,7 +334,7 @@ def phase1solver(T, basis,
     return nit, status
 
 
-def solve_zero_sum(GameMatrix):
+def change_to_zero_sum(GameMatrix):
     m, n = GameMatrix.shape
     c = np.append(np.zeros(m), -1)
     A_ub = np.hstack([-GameMatrix.T, np.ones((n, 1))])
@@ -372,9 +373,8 @@ def solve_zero_sum(GameMatrix):
 
     return T, basis, av
 
-
-def firstTosecond(T, basis, av):
-    #TODO split here
+# change from first phase to second
+def first_to_second(T, basis, av):
     status = 0
     tol = tol=1e-9
     if abs(T[-1, -1]) < tol:
@@ -418,5 +418,5 @@ if __name__ == '__main__':
     A = np.array([[-1, -1],
                   [-2, 3],
                   ])
-    solve_zero_sum(A)
+    change_to_zero_sum(A)
 
