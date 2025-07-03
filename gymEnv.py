@@ -10,6 +10,8 @@ class SimplexGymEnv(gym.Env):
     """
     metadata = {"render.modes": ["human"]}
 
+
+
     def __init__(self, A, b, c, maxiter=1000, tol=1e-9):
         super(SimplexGymEnv, self).__init__()
         self.A = A
@@ -28,7 +30,29 @@ class SimplexGymEnv(gym.Env):
         self.nit = 0
         self._initialize_tableau()
 
+    # @classmethod
+    def from_tableau(cls, tableau, basis, maxiter=1000, tol=1e-9):
+        """
+        Instantiate environment directly from a Phase 2-ready tableau and basis.
+        """
+        env = cls.__new__(cls)
+        super(SimplexGymEnv, env).__init__()
 
+        env.T = tableau.copy()
+        env.basis = basis.copy()
+        env.m = tableau.shape[0] - 1
+        env.n = tableau.shape[1] - 1
+        env.maxiter = maxiter
+        env.tol = tol
+        env.nit = 0
+
+        env.action_space = spaces.Discrete(4)
+        env.observation_space = spaces.Box(
+            low=-np.inf, high=np.inf,
+            shape=env.T.shape, dtype=np.float64
+        )
+
+        return env
 
     def _initialize_tableau(self):
         self.basis = np.arange(self.m) + self.n
@@ -86,6 +110,3 @@ class SimplexGymEnv(gym.Env):
     def close(self):
         pass
 
-
-def from_tableau(T, basis):
-    return None

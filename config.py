@@ -6,8 +6,9 @@ EPSILON = 0.1
 TIMESTEPS = 100_000
 MIN_VAL = -1
 MAX_VAL = 1
+BASE_MATRIX = np.array([[0,0,-1,-1,1],[1,0,-1,-1,1],[-1,-1,1,1,1],[1,1,1,1,-1],[-1,1,-1,-1,1]])
+# BASE_MATRIX = np.array([[1,-1,0],[0,1,-1],[-1,0,1]])
 # Training settings
-
 N_ENVS = 4
 # Model save path template
 MODEL_NAME_TEMPLATE = "ppo_simplex_random_{steps}_matrix{m}x{n}_min{min}_max{max}_epsilon{eps}.zip"
@@ -23,5 +24,3 @@ PIVOT_MAP = {
     3: 'steepest_edge'
 }
 
-BASE_MATRIX = np.array([[0,0,-1,-1,1],[1,0,-1,-1,1],[-1,-1,1,1,1],[1,1,1,1,-1],[-1,1,-1,-1,1]])
-# BASE_MATRIX = np.array([[1,-1,0],[0,1,-1],[-1,0,1]])
