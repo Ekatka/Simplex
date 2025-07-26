@@ -8,8 +8,8 @@ import matplotlib.pyplot as plt
 from stable_baselines3 import PPO
 from stable_baselines3.common.env_util import make_vec_env
 
-from createMatrix import Matrix
-from trainingOnMatrix import RandomMatrixEnv
+from matrix import Matrix
+from training_ppo_simplex import RandomMatrixEnv
 
 # int to actions
 pivot_map = {
@@ -34,10 +34,10 @@ def train_agent_for_size(m):
     3) Train PPO for BASE_TRAIN_STEPS * m^2 timesteps.
     Returns (model, train_time_seconds, base_matrix).
     """
-    matrix = Matrix(m, m, -1, 1)
-    base_P = matrix.generateMatrix()
+    matrix = Matrix(m, m, -1, 1, EPSILON)
+    matrix.generateMatrix()
 
-    env_fn = lambda: RandomMatrixEnv(base_P, epsilon=EPSILON)
+    env_fn = lambda: RandomMatrixEnv(matrix)
     vec_env = make_vec_env(env_fn, n_envs=N_ENVS)
 
     model = PPO("MlpPolicy", vec_env, verbose=0)
@@ -47,7 +47,7 @@ def train_agent_for_size(m):
     model.learn(total_timesteps=total_steps)
     t1 = time.perf_counter()
 
-    return model, (t1 - t0), base_P
+    return model, (t1 - t0), matrix
 
 
 def run_fixed_strategy(matrix, action):
@@ -55,7 +55,7 @@ def run_fixed_strategy(matrix, action):
     Run RandomMatrixEnv on passed matrix using fixed pivot `action
     Return total number of pivot steps (Phase 1 + Phase 2).
     """
-    env = RandomMatrixEnv(matrix, epsilon=EPSILON)
+    env = RandomMatrixEnv(matrix)
     obs, _ = env.reset()
     done = False
     while not done:
@@ -68,7 +68,7 @@ def run_rl_strategy(model, matrix):
     Run the composite RandomMatrixEnv under the trained
     Return total number of pivot steps (Phase 1 + Phase 2).
     """
-    env = RandomMatrixEnv(matrix, epsilon=EPSILON)
+    env = RandomMatrixEnv(matrix)
     obs, _ = env.reset()
     done = False
     while not done:
@@ -93,13 +93,12 @@ def benchmark_size(m):
     fixed = {name: [] for name in pivot_map.values()}
 
     for _ in range(TEST_MATRICES):
-        matrix = Matrix()
-        matrix.resize(m, m)
-        M = matrix.generateMatrix()
+        matrix = Matrix(m, m, -1, 1, EPSILON)
+        matrix.generateMatrix()
 
-        rl_steps.append(run_rl_strategy(model, M))
+        rl_steps.append(run_rl_strategy(model, matrix))
         for action, name in pivot_map.items():
-            fixed[name].append(run_fixed_strategy(M, action))
+            fixed[name].append(run_fixed_strategy(matrix, action))
 
     return {
         "m": m,

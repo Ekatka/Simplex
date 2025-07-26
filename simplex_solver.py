@@ -1,10 +1,9 @@
-import gym
+import gymnasium as gym
 import numpy as np
 from warnings import warn
 import scipy.sparse as sps
 from collections import namedtuple
-import gym
-from gym import spaces
+from gymnasium import spaces
 from stable_baselines3.common.type_aliases import GymEnv
 
 from _linprog_utils import (

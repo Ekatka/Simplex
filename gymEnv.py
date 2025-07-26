@@ -1,5 +1,5 @@
-import gym
-from gym import spaces
+import gymnasium as gym
+from gymnasium import spaces
 import numpy as np
 from my_simplex import _pivot_col, _pivot_row, _apply_pivot  # Your custom module with heuristics
 
