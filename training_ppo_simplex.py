@@ -33,24 +33,28 @@ class RandomMatrixEnv(gym.Env):
 
     def _init_env(self, seed=None):
         self.nit = 0
-        max_attempts = 10
+        max_attempts = 20  # Increased from 10
 
-        for _ in range(max_attempts):
-            perturbed_P = self.matrix.generate_perturbed_matrix()
-            npMatrix = perturbed_P.base_P
-            # takes matrix and makes a zero sum game linear program out of it
-            res = change_to_zero_sum(npMatrix)
-            # if it is not possible to do - numerical instability or some different problem try to do a new perturbed matrix
-            if res is not None:
-                # if the solution was found start first phase
-                T, basis, self.av = res
-                self.phase = 1
-                self.env = FirstPhasePivotingEnv(T, basis)
-                if seed is not None:
-                    self.env.reset(seed=seed)
-                return
+        for attempt in range(max_attempts):
+            try:
+                perturbed_P = self.matrix.generate_perturbed_matrix()
+                npMatrix = perturbed_P.base_P
+                # takes matrix and makes a zero sum game linear program out of it
+                res = change_to_zero_sum(npMatrix)
+                # if it is not possible to do - numerical instability or some different problem try to do a new perturbed matrix
+                if res is not None:
+                    # if the solution was found start first phase
+                    T, basis, self.av = res
+                    self.phase = 1
+                    self.env = FirstPhasePivotingEnv(T, basis)
+                    if seed is not None:
+                        self.env.reset(seed=seed)
+                    return
+            except Exception as e:
+                print(f"[RandomMatrixEnv] Attempt {attempt + 1} failed: {e}")
+                continue
 
-        print("Too many unstable matrices")
+        print(f"Too many unstable matrices for size {self.matrix.m}x{self.matrix.n}")
         raise RuntimeError("Failed to initialize a stable Phase 1 tableau.")
 
     def reset(self, seed=None, **kwargs):
@@ -64,11 +68,21 @@ class RandomMatrixEnv(gym.Env):
 
         if self.phase == 1 and done:
             # if the first phase is done, start the second
-            T2, basis2 = first_to_second(self.env.T, self.env.basis, self.av)
-            self.env = SecondPhasePivotingEnv(T2, basis2)
-            self.phase = 2
-            obs, _ = self.env.reset()
-            done = False
+            result = first_to_second(self.env.T, self.env.basis, self.av)
+            if result is None:
+                # Phase 1 failed - restart with a new matrix
+                print(f"[RandomMatrixEnv] Phase 1 failed for matrix size {self.matrix.m}x{self.matrix.n}, restarting...")
+                self._init_env()
+                obs, _ = self.env.reset()
+                done = False
+                # Give a small negative reward for restarting
+                reward = -0.1
+            else:
+                T2, basis2 = result
+                self.env = SecondPhasePivotingEnv(T2, basis2)
+                self.phase = 2
+                obs, _ = self.env.reset()
+                done = False
         # as the observation space between first and second phase have different sizes I add a padding to ensure they both have the same shape
         return pad_observation(obs, self.fixed_obs_shape), reward, done, truncated, info
 

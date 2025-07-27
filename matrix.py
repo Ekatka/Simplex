@@ -14,7 +14,7 @@ class Matrix:
 
     # generating matrix according to params
     def generateMatrix(self):
-        self.base_P = np.random.randint(self.min, self.max+1, size=(self.m, self.n))
+        self.base_P = np.random.uniform(self.min, self.max, size=(self.m, self.n))
         return self.base_P
 
     def returnSize(self):

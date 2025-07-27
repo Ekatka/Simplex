@@ -375,8 +375,12 @@ def change_to_zero_sum(GameMatrix):
 # change from first phase to second
 def first_to_second(T, basis, av):
     status = 0
-    tol = tol=1e-9
-    if abs(T[-1, -1]) < tol:
+    # Adaptive tolerance based on matrix size
+    m = len(basis) - len(av)  # number of original variables
+    base_tol = 1e-9
+    adaptive_tol = base_tol * max(1, m / 10)  # Increase tolerance for larger matrices
+    
+    if abs(T[-1, -1]) < adaptive_tol:
         # Remove the pseudo-objective row from the tableau
         T = T[:-1, :]
         # Remove the artificial variable columns from the tableau
@@ -394,7 +398,7 @@ def first_to_second(T, basis, av):
             "Phase 1 of the simplex method failed to find a feasible "
             "solution. The pseudo-objective function evaluates to "
             f"{abs(T[-1, -1]):.1e} "
-            f"which exceeds the required tolerance of {tol} for a solution to be "
+            f"which exceeds the required tolerance of {adaptive_tol} for a solution to be "
             "considered 'close enough' to zero to be a basic solution. "
             "Consider increasing the tolerance to be greater than "
             f"{abs(T[-1, -1]):.1e}. "
@@ -409,7 +413,7 @@ def first_to_second(T, basis, av):
 
     else:
         print("[solve_zero_sum] Phase 1 failed or LP is numerically unstable.")
-        print(f"[solve_zero_sum] Pseudo-objective: {T[-1, -1]:.2e} vs tol {tol:.1e}, status={status}")
+        print(f"[solve_zero_sum] Pseudo-objective: {T[-1, -1]:.2e} vs adaptive_tol {adaptive_tol:.1e}, status={status}")
         return None
 
 

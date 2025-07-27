@@ -20,11 +20,15 @@ pivot_map = {
 }
 
 # Configuration
-EPSILON = 0.1
+EPSILON = 0.01  # Reduced epsilon for better numerical stability
 N_ENVS = 4
 TEST_MATRICES = 5        #number of matrices average is tested on
-BASE_TRAIN_STEPS = 2000  # base timesteps, will be multiplied by m^2
-SIZES = list(range(2, 100, 2))  # matrix sizes: 2,4,6,8
+BASE_TRAIN_STEPS = 5000  # base timesteps, will be multiplied by m^2
+SIZES = list(range(2, 100, 2))  # matrix sizes: 2,4,6,8,10,12,14,16,18 for testing
+
+# Matrix generation parameters for better numerical stability
+MATRIX_MIN = -0.5
+MATRIX_MAX = 0.5
 
 
 def train_agent_for_size(m):
@@ -34,7 +38,7 @@ def train_agent_for_size(m):
     3) Train PPO for BASE_TRAIN_STEPS * m^2 timesteps.
     Returns (model, train_time_seconds, base_matrix).
     """
-    matrix = Matrix(m, m, -1, 1, EPSILON)
+    matrix = Matrix(m, m, MATRIX_MIN, MATRIX_MAX, EPSILON)
     matrix.generateMatrix()
 
     env_fn = lambda: RandomMatrixEnv(matrix)
@@ -93,7 +97,7 @@ def benchmark_size(m):
     fixed = {name: [] for name in pivot_map.values()}
 
     for _ in range(TEST_MATRICES):
-        matrix = Matrix(m, m, -1, 1, EPSILON)
+        matrix = Matrix(m, m, MATRIX_MIN, MATRIX_MAX, EPSILON)
         matrix.generateMatrix()
 
         rl_steps.append(run_rl_strategy(model, matrix))
