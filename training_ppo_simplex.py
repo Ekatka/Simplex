@@ -33,8 +33,7 @@ class RandomMatrixEnv(gym.Env):
 
     def _init_env(self, seed=None):
         self.nit = 0
-        max_attempts = 20  # Increased from 10
-
+        max_attempts = 20 
         for attempt in range(max_attempts):
             try:
                 perturbed_P = self.matrix.generate_perturbed_matrix()
@@ -75,7 +74,6 @@ class RandomMatrixEnv(gym.Env):
                 self._init_env()
                 obs, _ = self.env.reset()
                 done = False
-                # Give a small negative reward for restarting
                 reward = -0.1
             else:
                 T2, basis2 = result
@@ -83,18 +81,55 @@ class RandomMatrixEnv(gym.Env):
                 self.phase = 2
                 obs, _ = self.env.reset()
                 done = False
-        # as the observation space between first and second phase have different sizes I add a padding to ensure they both have the same shape
+
         return pad_observation(obs, self.fixed_obs_shape), reward, done, truncated, info
 
+
+def update_config_with_matrix(matrix_data):
+
+    config_content = []
+    with open('config.py', 'r') as f:
+        for line in f:
+            if line.strip().startswith('BASE_MATRIX ='):
+                config_content.append('BASE_MATRIX = np.array([\n')
+                for i, row in enumerate(matrix_data):
+                    row_str = "    [" + ", ".join(f"{val:.3f}" for val in row) + "]"
+                    if i == len(matrix_data) - 1:
+                        config_content.append(f"{row_str}\n")
+                    else:
+                        config_content.append(f"{row_str},\n")
+                config_content.append('])\n')
+            else:
+                config_content.append(line)
+    
+    with open('config.py', 'w') as f:
+        f.writelines(config_content)
 
 if __name__ == "__main__":
     print(M,N)
     matrix = Matrix(m=M, n=N, min=MIN_VAL, max=MAX_VAL, epsilon=EPSILON, base_P=BASE_MATRIX)
 
-    if matrix.base_P is None:
+
+    need_new_matrix = (
+        matrix.base_P is None or 
+        matrix.base_P.shape != (M, N)
+    )
+    
+    if need_new_matrix:
+        print(f"Generating new {M}x{N} matrix...")
         matrix.generateMatrix()
 
-    print("base_P:\n", matrix.base_P)
+        update_config_with_matrix(matrix.base_P)
+        print("Updated config.py with new BASE_MATRIX")
+        
+        import importlib
+        import config
+        importlib.reload(config)
+        from config import BASE_MATRIX
+        print("Reloaded configuration")
+    else:
+        print(f"Using existing {M}x{N} matrix from config")
+    
 
     vec_env = make_vec_env(lambda: RandomMatrixEnv(matrix), n_envs=N_ENVS)
     model = PPO("MlpPolicy", vec_env, verbose=1)

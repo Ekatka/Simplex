@@ -20,15 +20,15 @@ pivot_map = {
 }
 
 # Configuration
-EPSILON = 0.01  # Reduced epsilon for better numerical stability
+EPSILON = 0.1 
 N_ENVS = 4
 TEST_MATRICES = 5        #number of matrices average is tested on
 BASE_TRAIN_STEPS = 5000  # base timesteps, will be multiplied by m^2
-SIZES = list(range(2, 100, 2))  # matrix sizes: 2,4,6,8,10,12,14,16,18 for testing
+SIZES = list(range(20,21))  # matrix sizes: 2,4,6,8,10,12,14,16,18 for testing
 
 # Matrix generation parameters for better numerical stability
-MATRIX_MIN = -0.5
-MATRIX_MAX = 0.5
+MATRIX_MIN = -1
+MATRIX_MAX = 1
 
 
 def train_agent_for_size(m):

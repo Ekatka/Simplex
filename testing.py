@@ -39,9 +39,13 @@ def find_optimal_pivot_sequence_bfs(matrix: Matrix):
         for a in path:
             _, _, _, _, _ = final_env.step(a)
         game_value = -final_env.env.T[-1, -1]
+        first_player_strategy = extract_optimal_strategy(final_env.env.T, final_env.env.basis, M)
+        second_player_strategy = extract_second_player_strategy(final_env.env.T, final_env.env.basis, M, N)
         readable = [PIVOT_MAP[a] for a in path]
         print(f"\n[BFS] Shortest path: {' → '.join(readable)} ({len(path)} steps)")
         print(f"[BFS] Game Value: {game_value:.6f}")
+        print(f"[BFS] First Player Strategy: {first_player_strategy}")
+        print(f"[BFS] Second Player Strategy: {second_player_strategy}")
         return path, len(path), game_value
 
     print("[BFS] No valid solution found within search limit.")
@@ -54,28 +58,53 @@ def run_fixed_strategy(matrix: Matrix, action: int):
     while not done:
         _, _, done, _, _ = env.step(action)
     method = PIVOT_MAP[action]
+    game_value = -env.env.T[-1, -1]
+    first_player_strategy = extract_optimal_strategy(env.env.T, env.env.basis, M)
+    second_player_strategy = extract_second_player_strategy(env.env.T, env.env.basis, M, N)
     print(f"[{method.title()} Pivot] Steps: {env.nit}")
-    print(f"[{method.title()} Pivot] Game Value: {-env.env.T[-1, -1]:.6f}")
 
 def test_fixed_strategies(matrix: Matrix):
     for action in range(4):
         run_fixed_strategy(matrix, action)
 
 def extract_optimal_strategy(T, basis, m):
-    # num_constraints = T.shape[0] - 1  # exclude objective row
-    # num_vars = T.shape[1] - 1  # exclude RHS column
-    #
-    # x = np.zeros(num_vars)
-    #
-    # for row in range(num_constraints):
-    #     var = basis[row]
-    #     if 0 <= var < num_vars:
-    #         x[var] = T[row, -1]
-    #
-    # strategy = x[:m]
-    # total = strategy.sum()
-    # return strategy / total if total > 1e-8 else strategy
-    return "Not tested"
+
+    num_constraints = T.shape[0] - 1 
+    num_vars = T.shape[1] - 1  
+    
+
+    x = np.zeros(num_vars)
+    
+
+    for row in range(num_constraints):
+        var = basis[row]  
+        if 0 <= var < num_vars:  
+            x[var] = T[row, -1]  
+    strategy = x[:m]
+    
+    total = strategy.sum()
+    if total > 1e-8: 
+        strategy = strategy / total
+    else:
+        strategy = np.ones(m) / m
+    
+    return strategy
+
+def extract_second_player_strategy(T, basis, m, n):
+
+    num_constraints = T.shape[0] - 1 
+    num_vars = T.shape[1] - 1 
+    objective_row = T[-1, :-1] 
+    dual_vars = objective_row[-n:]
+    dual_vars = np.abs(dual_vars)
+    total = dual_vars.sum()
+    if total > 1e-8:
+        second_player_strategy = dual_vars / total
+    else:
+        second_player_strategy = np.ones(n) / n
+    
+    return second_player_strategy
+
 
 def test_rl(matrix: Matrix):
     print("\n--- PPO Policy Evaluation ---")
@@ -102,13 +131,14 @@ def test_rl(matrix: Matrix):
         obs, _, done, _, _ = env.step(action)
 
     game_value = -env.env.T[-1, -1] if env.phase == 2 else np.nan
-    # print(env.env.T)
-    # print(env.env.basis)
-    # print(M)
-    strategy = extract_optimal_strategy(env.env.T, env.env.basis, M)
+    
+    first_player_strategy = extract_optimal_strategy(env.env.T, env.env.basis, M)
+    second_player_strategy = extract_second_player_strategy(env.env.T, env.env.basis, M, N)
     print(f"[RL] Game Value: {game_value:.6f}")
-    print("[RL] Mixed Strategy:", strategy)
+    print("[RL] First Player Strategy:", first_player_strategy)
+    print("[RL] Second Player Strategy:", second_player_strategy)
     print(f"[RL] Steps Taken: {env.nit}")
+    
 
 if __name__ == "__main__":
     print(M,N)
@@ -122,4 +152,4 @@ if __name__ == "__main__":
 
     test_rl(test_matrix)
     test_fixed_strategies(test_matrix)
-    find_optimal_pivot_sequence_bfs(test_matrix)
+    # find_optimal_pivot_sequence_bfs(test_matrix)
