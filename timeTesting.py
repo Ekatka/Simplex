@@ -3,8 +3,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from stable_baselines3 import PPO
 from stable_baselines3.common.env_util import make_vec_env
-from trainingOnMatrix import RandomMatrixEnv
-from createMatrix import Matrix
+from training_ppo_simplex import RandomMatrixEnv
+from matrix import Matrix
 
 epsilon = 0
 trainingSize = 10_000
@@ -16,7 +16,7 @@ def trainingTimeForMatrix(matrix_size):
     matrix_instance.resize(matrix_size, matrix_size)
     base_P = matrix_instance.generateMatrix()
 
-    vec_env = make_vec_env(lambda: RandomMatrixEnv(base_P, epsilon=epsilon), n_envs=4)
+    vec_env = make_vec_env(lambda: RandomMatrixEnv(base_P), n_envs=4)
 
     model = PPO("MlpPolicy", vec_env, verbose=0)
 

@@ -12,7 +12,7 @@ class SimplexGymEnv(gym.Env):
 
 
 
-    def __init__(self, A, b, c, maxiter=1000, tol=1e-9):
+    def __init__(self, A, b, c, maxiter=10000, tol=1e-9):
         super(SimplexGymEnv, self).__init__()
         self.A = A
         self.b = b
@@ -31,7 +31,7 @@ class SimplexGymEnv(gym.Env):
         self._initialize_tableau()
 
     # @classmethod
-    def from_tableau(cls, tableau, basis, maxiter=1000, tol=1e-9):
+    def from_tableau(cls, tableau, basis, maxiter=10000, tol=1e-9):
         """
         Instantiate environment directly from a Phase 2-ready tableau and basis.
         """
