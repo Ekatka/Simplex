@@ -30,7 +30,7 @@ class SecondPhasePivotingEnv(gym.Env):
         self.tol = 1e-9
         self.m = self.T.shape[1] - 1
         self.remove_artificial()
-        self.maxiter = 100_000
+        self.maxiter = 1_000_000
         self.nit = 0
         if len(self.basis[:self.m]) == 0:
             self.solution = np.empty(self.T.shape[1] - 1, dtype=np.float64)
@@ -391,13 +391,11 @@ def change_to_zero_sum(GameMatrix):
     A[is_negative_constraint] *= -1
     b[is_negative_constraint] *= -1
 
-    # As all constraints are equality constraints the artificial variables
+    # As all cons   traints are equality constraints the artificial variables
     # will also be basic variables.
     av = np.arange(n) + m
     basis = av.copy()
 
-    # Format the phase one tableau by adding artificial variables and stacking
-    # the constraints, the objective row and pseudo-objective row.
     row_constraints = np.hstack((A, np.eye(n), b[:, np.newaxis]))
     row_objective = np.hstack((c, np.zeros(n), c0))
     row_pseudo_objective = -row_constraints.sum(axis=0)

@@ -10,8 +10,9 @@ import copy
 # Import constants
 from config import (
     M, N, MIN_VAL, MAX_VAL, EPSILON, TIMESTEPS,
-    BASE_MATRIX, MODEL_NAME_TEMPLATE, BFS_DEPTH, PIVOT_MAP, NUM_PIVOT_STRATEGIES
+    MODEL_NAME_TEMPLATE, BFS_DEPTH, PIVOT_MAP, NUM_PIVOT_STRATEGIES
 )
+from base_matrix import BASE_MATRIX
 def bfs_search(env_start):
     queue = deque()
     queue.append((env_start, []))
@@ -188,6 +189,6 @@ if __name__ == "__main__":
     print("\nTesting Matrix:")
     print(pd.DataFrame(test_matrix.base_P).to_string(index=False, header=False))
 
-    test_rl(test_matrix)
+    # test_rl(test_matrix)
     test_fixed_strategies(test_matrix)
     # find_optimal_pivot_sequence_bfs(test_matrix)
