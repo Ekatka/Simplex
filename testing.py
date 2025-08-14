@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 from stable_baselines3 import PPO
 from matrix import Matrix
-from simplex_solver import change_to_zero_sum, SecondPhasePivotingEnv
+from simplex_solver import change_to_zero_sum_phase2_only, SecondPhasePivotingEnv
 from training_ppo_simplex import RandomMatrixEnv
 from collections import deque
 import copy
@@ -10,7 +10,7 @@ import copy
 # Import constants
 from config import (
     M, N, MIN_VAL, MAX_VAL, EPSILON, TIMESTEPS,
-    BASE_MATRIX, MODEL_NAME_TEMPLATE, BFS_DEPTH, PIVOT_MAP
+    BASE_MATRIX, MODEL_NAME_TEMPLATE, BFS_DEPTH, PIVOT_MAP, NUM_PIVOT_STRATEGIES
 )
 def bfs_search(env_start):
     queue = deque()
@@ -19,7 +19,7 @@ def bfs_search(env_start):
         env, path = queue.popleft()
         if len(path) >= BFS_DEPTH:
             continue
-        for action in range(4):
+        for action in range(NUM_PIVOT_STRATEGIES):  # Use constant from config
             env_copy = copy.deepcopy(env)
             _, _, done, _, _ = env_copy.step(action)
             new_path = path + [action]
@@ -38,9 +38,14 @@ def find_optimal_pivot_sequence_bfs(matrix: Matrix):
         _, _ = final_env.reset()
         for a in path:
             _, _, _, _, _ = final_env.step(a)
-        game_value = -final_env.env.T[-1, -1]
-        first_player_strategy = extract_optimal_strategy(final_env.env.T, final_env.env.basis, M)
-        second_player_strategy = extract_second_player_strategy(final_env.env.T, final_env.env.basis, M, N)
+        
+        # Extract strategies
+        first_player_strategy = extract_optimal_strategy(final_env.T, final_env.basis, M)
+        second_player_strategy = extract_second_player_strategy(final_env.T, final_env.basis, M, N)
+        
+        # Compute game value using the correct formula from game theory
+        game_value = compute_game_value_from_strategies(matrix, first_player_strategy, second_player_strategy)
+        
         readable = [PIVOT_MAP[a] for a in path]
         print(f"\n[BFS] Shortest path: {' → '.join(readable)} ({len(path)} steps)")
         print(f"[BFS] Game Value: {game_value:.6f}")
@@ -58,13 +63,18 @@ def run_fixed_strategy(matrix: Matrix, action: int):
     while not done:
         _, _, done, _, _ = env.step(action)
     method = PIVOT_MAP[action]
-    game_value = -env.env.T[-1, -1]
-    first_player_strategy = extract_optimal_strategy(env.env.T, env.env.basis, M)
-    second_player_strategy = extract_second_player_strategy(env.env.T, env.env.basis, M, N)
-    print(f"[{method.title()} Pivot] Steps: {env.nit}")
+    
+    # Extract strategies
+    first_player_strategy = extract_optimal_strategy(env.T, env.basis, M)
+    second_player_strategy = extract_second_player_strategy(env.T, env.basis, M, N)
+    
+    # Compute game value using the correct formula from game theory
+    game_value = compute_game_value_from_strategies(matrix, first_player_strategy, second_player_strategy)
+    
+    print(f"[{method.title()} Pivot] Steps: {env.nit}, Game Value: {game_value:.6f}")
 
 def test_fixed_strategies(matrix: Matrix):
-    for action in range(4):
+    for action in range(NUM_PIVOT_STRATEGIES):  # Use constant from config
         run_fixed_strategy(matrix, action)
 
 def extract_optimal_strategy(T, basis, m):
@@ -105,6 +115,31 @@ def extract_second_player_strategy(T, basis, m, n):
     
     return second_player_strategy
 
+def compute_game_value_from_strategies(matrix: Matrix, first_player_strategy, second_player_strategy):
+    """
+    Compute the game value using the optimal strategies and the original payoff matrix.
+    For zero-sum games: Game Value = x^T * P * y
+    
+    Args:
+        matrix: The original payoff matrix
+        first_player_strategy: Optimal strategy for first player (row player)
+        second_player_strategy: Optimal strategy for second player (column player)
+    
+    Returns:
+        game_value: The computed game value
+    """
+    # Convert strategies to numpy arrays if they aren't already
+    x = np.array(first_player_strategy)
+    y = np.array(second_player_strategy)
+    
+    # Get the payoff matrix
+    P = matrix.base_P
+    
+    # Compute game value: x^T * P * y
+    game_value = x.T @ P @ y
+    
+    return game_value
+
 
 def test_rl(matrix: Matrix):
     print("\n--- PPO Policy Evaluation ---")
@@ -127,13 +162,16 @@ def test_rl(matrix: Matrix):
     done = False
     while not done:
         action, _ = model.predict(obs)
-        print(f"[RL] Action: {PIVOT_MAP[int(action)]}")
+        # print(f"[RL] Action: {PIVOT_MAP[int(action)]}")
         obs, _, done, _, _ = env.step(action)
 
-    game_value = -env.env.T[-1, -1] if env.phase == 2 else np.nan
+    # Extract strategies
+    first_player_strategy = extract_optimal_strategy(env.T, env.basis, M)
+    second_player_strategy = extract_second_player_strategy(env.T, env.basis, M, N)
     
-    first_player_strategy = extract_optimal_strategy(env.env.T, env.env.basis, M)
-    second_player_strategy = extract_second_player_strategy(env.env.T, env.env.basis, M, N)
+    # Compute game value using the correct formula from game theory
+    game_value = compute_game_value_from_strategies(matrix, first_player_strategy, second_player_strategy)
+    
     print(f"[RL] Game Value: {game_value:.6f}")
     print("[RL] First Player Strategy:", first_player_strategy)
     print("[RL] Second Player Strategy:", second_player_strategy)

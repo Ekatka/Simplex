@@ -10,14 +10,15 @@ from stable_baselines3.common.env_util import make_vec_env
 
 from matrix import Matrix
 from training_ppo_simplex import RandomMatrixEnv
+from config import PIVOT_MAP, NUM_PIVOT_STRATEGIES
 
-# int to actions
-pivot_map = {
-    0: "bland",
-    1: "largest_coefficient",
-    2: "largest_increase",
-    3: "steepest_edge",
-}
+# Use PIVOT_MAP from config instead of local definition
+# pivot_map = {
+#     0: "bland",
+#     1: "largest_coefficient",
+#     2: "largest_increase",
+#     3: "steepest_edge",
+# }
 
 # Configuration
 EPSILON = 0.1 
@@ -94,14 +95,14 @@ def benchmark_size(m):
     model, train_time, _ = train_agent_for_size(m)
 
     rl_steps = []
-    fixed = {name: [] for name in pivot_map.values()}
+    fixed = {name: [] for name in PIVOT_MAP.values()}
 
     for _ in range(TEST_MATRICES):
         matrix = Matrix(m, m, MATRIX_MIN, MATRIX_MAX, EPSILON)
         matrix.generateMatrix()
 
         rl_steps.append(run_rl_strategy(model, matrix))
-        for action, name in pivot_map.items():
+        for action, name in PIVOT_MAP.items():
             fixed[name].append(run_fixed_strategy(matrix, action))
 
     return {
@@ -109,7 +110,7 @@ def benchmark_size(m):
         "elements": m * m,
         "train_time": train_time,
         "avg_rl_steps": np.mean(rl_steps),
-        "avg_fixed": {name: np.mean(fixed[name]) for name in pivot_map.values()}
+        "avg_fixed": {name: np.mean(fixed[name]) for name in PIVOT_MAP.values()}
     }
 
 
@@ -118,7 +119,7 @@ def main():
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     csv_filename = f"benchmark_results_{timestamp}.csv"
     fieldnames = ["size", "elements", "train_time", "avg_rl_steps"] + [
-        f"avg_fixed_{name}" for name in pivot_map.values()
+        f"avg_fixed_{name}" for name in PIVOT_MAP.values()
     ]
 
     with open(csv_filename, mode="w", newline="") as csvfile:
@@ -131,7 +132,7 @@ def main():
             fixed_vals = r["avg_fixed"]
             best_name = min(fixed_vals, key=lambda k: fixed_vals[k])
             best_steps = fixed_vals[best_name]
-            others = ", ".join(f"{n[:3]}={fixed_vals[n]:.1f}" for n in pivot_map.values())
+            others = ", ".join(f"{n[:3]}={fixed_vals[n]:.1f}" for n in PIVOT_MAP.values())
 
             print(f"{m}×{m} | {r['train_time']:.2f}s |  {r['avg_rl_steps']:.1f}   |  "
                   f"{best_name[:3]}={best_steps:.1f}  [{others}]")
@@ -154,7 +155,7 @@ def main():
     elements = []
     train_times = []
     avg_rl = []
-    avg_fixed = {name: [] for name in pivot_map.values()}
+    avg_fixed = {name: [] for name in PIVOT_MAP.values()}
 
     with open(csv_filename, mode="r") as csvfile:
         reader = csv.DictReader(csvfile)
@@ -163,7 +164,7 @@ def main():
             elements.append(int(row["elements"]))
             train_times.append(float(row["train_time"]))
             avg_rl.append(float(row["avg_rl_steps"]))
-            for name in pivot_map.values():
+            for name in PIVOT_MAP.values():
                 avg_fixed[name].append(float(row[f"avg_fixed_{name}"]))
 
     # Plot 1: Training time vs matrix elements

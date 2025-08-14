@@ -3,33 +3,23 @@ import gymnasium as gym
 from stable_baselines3 import PPO
 from stable_baselines3.common.env_util import make_vec_env
 
-from simplex_solver import change_to_zero_sum, FirstPhasePivotingEnv, SecondPhasePivotingEnv, first_to_second
+from simplex_solver import change_to_zero_sum_phase2_only, SecondPhasePivotingEnv
 from matrix import Matrix
 
-from config import M, N, MIN_VAL, MAX_VAL, EPSILON, TIMESTEPS, N_ENVS, BASE_MATRIX, MODEL_NAME_TEMPLATE
+from config import M, N, MIN_VAL, MAX_VAL, EPSILON, TIMESTEPS, N_ENVS, BASE_MATRIX, MODEL_NAME_TEMPLATE, NUM_PIVOT_STRATEGIES
 
 
-
-def pad_observation(obs, target_shape):
-    padded = np.zeros(target_shape, dtype=obs.dtype)
-    padded[:obs.shape[0], :obs.shape[1]] = obs
-    return padded
-
-
-class RandomMatrixEnv(gym.Env):
+class RandomMatrixEnv(SecondPhasePivotingEnv):
     def __init__(self, matrix: Matrix):
-        super().__init__()
         self.matrix = matrix  # Store full Matrix object
         self.epsilon = matrix.epsilon
-        self.env = None
-        self.phase = None
-        self.av = None
+        self.K = None  # Store the shift constant K
         self.nit = 0
 
         self._init_env()
-        self.fixed_obs_shape = self.env.observation_space.shape
-        self.observation_space = self.env.observation_space
-        self.action_space = self.env.action_space
+        
+        # Call parent constructor with the created tableau and basis
+        super().__init__(self.T, self.basis)
 
     def _init_env(self, seed=None):
         self.nit = 0
@@ -39,50 +29,29 @@ class RandomMatrixEnv(gym.Env):
                 perturbed_P = self.matrix.generate_perturbed_matrix()
                 npMatrix = perturbed_P.base_P
                 # takes matrix and makes a zero sum game linear program out of it
-                res = change_to_zero_sum(npMatrix)
+                # Now using direct Phase 2 approach - no Phase 1 needed
+                res = change_to_zero_sum_phase2_only(npMatrix)
                 # if it is not possible to do - numerical instability or some different problem try to do a new perturbed matrix
                 if res is not None:
-                    # if the solution was found start first phase
-                    T, basis, self.av = res
-                    self.phase = 1
-                    self.env = FirstPhasePivotingEnv(T, basis)
-                    if seed is not None:
-                        self.env.reset(seed=seed)
+                    # if the solution was found start directly with Phase 2
+                    self.T, self.basis, self.K = res  # Store K for game value calculation
                     return
             except Exception as e:
                 print(f"[RandomMatrixEnv] Attempt {attempt + 1} failed: {e}")
                 continue
 
         print(f"Too many unstable matrices for size {self.matrix.m}x{self.matrix.n}")
-        raise RuntimeError("Failed to initialize a stable Phase 1 tableau.")
+        raise RuntimeError("Failed to initialize a stable Phase 2 tableau.")
 
     def reset(self, seed=None, **kwargs):
         self._init_env(seed)
-        obs, info = self.env.reset(seed=seed)
-        return pad_observation(obs, self.fixed_obs_shape), info
+        self.nit = 0
+        return super().reset(seed=seed)
 
     def step(self, action):
-        obs, reward, done, truncated, info = self.env.step(action)
+        obs, reward, done, truncated, info = super().step(action)
         self.nit += 1
-
-        if self.phase == 1 and done:
-            # if the first phase is done, start the second
-            result = first_to_second(self.env.T, self.env.basis, self.av)
-            if result is None:
-                # Phase 1 failed - restart with a new matrix
-                print(f"[RandomMatrixEnv] Phase 1 failed for matrix size {self.matrix.m}x{self.matrix.n}, restarting...")
-                self._init_env()
-                obs, _ = self.env.reset()
-                done = False
-                reward = -0.1
-            else:
-                T2, basis2 = result
-                self.env = SecondPhasePivotingEnv(T2, basis2)
-                self.phase = 2
-                obs, _ = self.env.reset()
-                done = False
-
-        return pad_observation(obs, self.fixed_obs_shape), reward, done, truncated, info
+        return obs, reward, done, truncated, info
 
 
 def update_config_with_matrix(matrix_data):

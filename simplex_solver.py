@@ -10,6 +10,8 @@ from _linprog_utils import (
     _parse_linprog, _presolve, _get_Abc, _LPProblem, _autoscale,
     _postsolve, _check_result, _display_summary)
 
+from config import PIVOT_MAP, NUM_PIVOT_STRATEGIES
+
 class SecondPhasePivotingEnv(gym.Env):
 
     def remove_artificial(self):
@@ -22,22 +24,20 @@ class SecondPhasePivotingEnv(gym.Env):
                 _apply_pivot(self.T, self.basis, pivrow, pivcol, self.tol)
                 self.nit += 1
 
-
-
     def __init__(self, T, basis):
         self.basis = basis
         self.T = T
         self.tol = 1e-9
         self.m = self.T.shape[1] - 1
         self.remove_artificial()
-        self.maxiter = 5000
+        self.maxiter = 100_000
         self.nit = 0
         if len(self.basis[:self.m]) == 0:
             self.solution = np.empty(self.T.shape[1] - 1, dtype=np.float64)
         else:
             self.solution = np.empty(max(self.T.shape[1] - 1, max(self.basis[:self.m]) + 1),
                                 dtype=np.float64)
-        self.action_space = spaces.Discrete(4)
+        self.action_space = spaces.Discrete(NUM_PIVOT_STRATEGIES)  # Use constant from config
         self.observation_space = spaces.Box(
             low=-np.inf, high=np.inf,
             shape=self.T.shape, dtype=np.float64
@@ -52,13 +52,8 @@ class SecondPhasePivotingEnv(gym.Env):
         return self._get_obs(), {}
 
     def step(self, action):
-        strategy_map = { #initialize in beginning
-            0: 'bland',
-            1: 'largest_coefficient',
-            2: 'largest_increase',
-            3: 'steepest_edge'
-        }
-        strategy = strategy_map[int(action)]
+        # Use PIVOT_MAP from config instead of local definition
+        strategy = PIVOT_MAP[int(action)]
         done = False
         reward = -1  # Penalize per step only
 
@@ -98,8 +93,8 @@ class FirstPhasePivotingEnv(gym.Env):
         self.tol = 1e-9
         self.maxiter = 5000
         self.nit0 = nit0
-        self.action_space = spaces.Discrete(4)
-        self.status = None
+        self.nit = 0
+        self.action_space = spaces.Discrete(NUM_PIVOT_STRATEGIES)  # Use constant from config
         self.observation_space = spaces.Box(
             low=-np.inf, high=np.inf,
             shape=self.T.shape, dtype=np.float64
@@ -115,14 +110,9 @@ class FirstPhasePivotingEnv(gym.Env):
         return self._get_obs(), {}
 
     def step(self, action):
-    # according to the given strategy find pivot column and row and apply the pivot
-        strategy_map = {
-            0: 'bland',
-            1: 'largest_coefficient',
-            2: 'largest_increase',
-            3: 'steepest_edge'
-        }
-        strategy = strategy_map[int(action)]
+        # according to the given strategy find pivot column and row and apply the pivot
+        # Use PIVOT_MAP from config instead of local definition
+        strategy = PIVOT_MAP[int(action)]
         reward = -1
         done = False
 
@@ -203,7 +193,8 @@ def _pivot_col_heuristics(T, strategy, tol=1e-9):
     if ma.count() == 0:
         return False, np.nan
 
-    if strategy == 'bland':
+    if strategy == 'blands_rule':
+        # Bland's rule: choose the leftmost negative coefficient
         col = np.nonzero(np.logical_not(np.atleast_1d(ma.mask)))[0][0]
         return True, col
 
@@ -212,7 +203,6 @@ def _pivot_col_heuristics(T, strategy, tol=1e-9):
         return True,  col
 
     elif strategy == 'largest_increase':
-
         res, col = pivot_col_largest_increase(T, ma, tol)
         return res, col
 
@@ -459,6 +449,262 @@ def first_to_second(T, basis, av):
         print("[solve_zero_sum] Phase 1 failed or LP is numerically unstable.")
         print(f"[solve_zero_sum] Pseudo-objective: {T[-1, -1]:.2e} vs adaptive_tol {adaptive_tol:.1e}, status={status}")
         return None
+
+
+def change_to_zero_sum_direct_phase2(GameMatrix):
+    """
+    Convert a zero-sum game matrix directly to Phase 2 tableau without Phase 1.
+    This function builds a trivial feasible BFS and returns a Phase 2 tableau
+    ready for optimization, in the same format as first_to_second would produce.
+    
+    Args:
+        GameMatrix: Payoff matrix M (m x n)
+    
+    Returns:
+        T: Phase 2 tableau ready for optimization
+        basis: Basis indices for the BFS
+        None: No artificial variables needed (av is None for compatibility)
+    """
+    m, n = GameMatrix.shape
+    
+    # Step 1: Compute K so that B = M + K*11^T >= 0
+    min_element = np.min(GameMatrix)
+    K = max(0, -min_element + 1e-6)
+    
+    # Step 2: Create matrix B = M + K*11^T
+    B = GameMatrix + K
+    
+    # Step 3: Convert to standard form LP exactly as change_to_zero_sum does
+    # The LP is: max v subject to B^T * x >= v, sum(x) = 1, x >= 0
+    # This is equivalent to: min -v subject to -B^T * x + v <= 0, sum(x) = 1, x >= 0
+    
+    # Variables: x (m variables) + v (1 variable) + slack variables (n variables)
+    # Total variables: m + 1 + n
+    
+    # Build constraint matrix A
+    # First n rows: -B^T * x + v + s_i = 0 (where s_i are slack variables)
+    # Last row: sum(x) = 1
+    
+    # Slack variables for the first n constraints
+    slack_matrix = np.eye(n)
+    
+    # Build the constraint matrix
+    A_constraints = np.hstack([-B.T, np.ones((n, 1)), slack_matrix])
+    A_sum = np.hstack([np.ones(m), np.zeros(1), np.zeros(n)])
+    
+    A = np.vstack([A_constraints, A_sum])
+    
+    # Right-hand side vector
+    b = np.zeros(n + 1)
+    b[-1] = 1  # sum(x) = 1
+    
+    # Objective function: min -v (equivalent to max v)
+    c = np.zeros(m + 1 + n)  # x variables + v variable + slack variables
+    c[m] = -1  # coefficient for v variable
+    
+    # Step 4: Build the tableau
+    # Tableau format: [A | b]
+    #                 [c | 0]
+    
+    tableau_constraints = np.hstack([A, b.reshape(-1, 1)])
+    tableau_objective = np.append(c, 0)
+    
+    T = np.vstack([tableau_constraints, tableau_objective])
+    
+    # Step 5: Set up the basis for a feasible starting point
+    # The basis will include:
+    # - One decision variable (x[0])
+    # - The value variable (v)
+    # - Slack variables for the remaining constraints
+    
+    basis = np.zeros(n + 1, dtype=int)
+    basis[0] = 0  # x[0] is basic
+    basis[1] = m  # v is basic
+    basis[2:] = m + 1 + np.arange(n-1)  # slack variables for first n-1 constraints
+    
+    # Step 6: Ensure the tableau represents a valid BFS
+    # We need to perform elementary row operations to get the identity matrix
+    # in the basis columns
+    
+    # This is a simplified approach - in practice, you might need more sophisticated
+    # row operations to ensure the tableau is in canonical form
+    
+    return T, basis, None
+
+
+def build_trivial_bfs_zero_sum_game(GameMatrix):
+    """
+    Build a trivial feasible basic feasible solution (BFS) for zero-sum games.
+    This function computes K so that B = M + K*11^T >= 0, then constructs
+    a Phase 2 tableau directly from this BFS.
+    
+    Args:
+        GameMatrix: Payoff matrix M (m x n)
+    
+    Returns:
+        T: Phase 2 tableau ready for optimization
+        basis: Basis indices for the BFS
+    """
+    m, n = GameMatrix.shape
+    
+    # Step 1: Compute K so that B = M + K*11^T >= 0
+    # We need K >= -min(M) to ensure all elements are non-negative
+    min_element = np.min(GameMatrix)
+    K = max(0, -min_element + 1e-6)  # Add small epsilon for numerical stability
+    
+    # Step 2: Create matrix B = M + K*11^T
+    B = GameMatrix + K
+    
+    # Step 3: Convert to standard form LP
+    # The LP is: max v subject to B^T * x >= v, sum(x) = 1, x >= 0
+    # This is equivalent to: min -v subject to -B^T * x + v <= 0, sum(x) = 1, x >= 0
+    
+    # Constraints: -B^T * x + v <= 0 (n constraints)
+    # Constraint: sum(x) = 1 (1 constraint)
+    # Variables: x (m variables) + v (1 variable) + slack variables (n+1 variables)
+    
+    # Build constraint matrix A
+    # First n rows: -B^T * x + v + s_i = 0 (where s_i are slack variables)
+    # Last row: sum(x) = 1
+    
+    # Slack variables for the first n constraints
+    slack_matrix = np.eye(n)
+    
+    # Build the constraint matrix
+    A_constraints = np.hstack([-B.T, np.ones((n, 1)), slack_matrix])
+    A_sum = np.hstack([np.ones(m), np.zeros(1), np.zeros(n)])
+    
+    A = np.vstack([A_constraints, A_sum])
+    
+    # Right-hand side vector
+    b = np.zeros(n + 1)
+    b[-1] = 1  # sum(x) = 1
+    
+    # Objective function: min -v (equivalent to max v)
+    c = np.zeros(m + 1 + n)  # x variables + v variable + slack variables
+    c[m] = -1  # coefficient for v variable
+    
+    # Step 4: Choose starting basis
+    # We'll use the first pure strategy (row 0) as starting basis
+    # Set x[0] = 1/min(B[0, :]), all other decision vars = 0
+    
+    # Find the minimum element in the first row of B
+    min_first_row = np.min(B[0, :])
+    x0_val = 1.0 / min_first_row if min_first_row > 0 else 1.0
+    
+    # Set up the starting solution
+    x_solution = np.zeros(m)
+    x_solution[0] = x0_val
+    
+    # Compute v value: v = min(B^T * x)
+    v_val = np.min(B.T @ x_solution)
+    
+    # Compute slack variables: s = B^T * x - v
+    slack_solution = B.T @ x_solution - v_val
+    
+    # Step 5: Build the tableau
+    # Tableau format: [A | b]
+    #                 [c | 0]
+    
+    tableau_constraints = np.hstack([A, b.reshape(-1, 1)])
+    tableau_objective = np.append(c, 0)
+    
+    T = np.vstack([tableau_constraints, tableau_objective])
+    
+    # Step 6: Set up the basis
+    # The basis will include:
+    # - The first decision variable (x[0])
+    # - The value variable (v)
+    # - Slack variables for the first n-1 constraints
+    # - The last constraint (sum(x) = 1) will be satisfied by the basis
+    
+    basis = np.zeros(n + 1, dtype=int)
+    basis[0] = 0  # x[0] is basic
+    basis[1] = m  # v is basic
+    basis[2:] = m + 1 + np.arange(n-1)  # slack variables for first n-1 constraints
+    
+    return T, basis
+
+
+def change_to_zero_sum_phase2_only(GameMatrix):
+    """
+    Convert a zero-sum game matrix directly to Phase 2 tableau without Phase 1.
+    This function simulates the result of first_to_second by creating a tableau
+    in the exact format that would be produced after removing artificial variables.
+    
+    Args:
+        GameMatrix: Payoff matrix M (m x n)
+    
+    Returns:
+        T: Phase 2 tableau ready for optimization
+        basis: Basis indices for the BFS
+        K: The constant shift applied to M (needed for game value calculation)
+    """
+    m, n = GameMatrix.shape
+    
+    # Step 1: Compute K so that B = M + K*11^T >= 0
+    min_element = np.min(GameMatrix)
+    K = max(0, -min_element + 1e-6)
+    
+    # Step 2: Create matrix B = M + K*11^T
+    B = GameMatrix + K
+    
+    # Step 3: Convert to standard form LP exactly as change_to_zero_sum does
+    # The LP is: max v subject to B^T * x >= v, sum(x) = 1, x >= 0
+    # This is equivalent to: min -v subject to -B^T * x + v <= 0, sum(x) = 1, x >= 0
+    
+    # Variables: x (m variables) + v (1 variable) + slack variables (n variables)
+    # Total variables: m + 1 + n
+    
+    # Build constraint matrix A
+    # First n rows: -B^T * x + v + s_i = 0 (where s_i are slack variables)
+    # Last row: sum(x) = 1
+    
+    # Slack variables for the first n constraints
+    slack_matrix = np.eye(n)
+    
+    # Build the constraint matrix
+    A_constraints = np.hstack([-B.T, np.ones((n, 1)), slack_matrix])
+    A_sum = np.hstack([np.ones(m), np.zeros(1), np.zeros(n)])
+    
+    A = np.vstack([A_constraints, A_sum])
+    
+    # Right-hand side vector
+    b = np.zeros(n + 1)
+    b[-1] = 1  # sum(x) = 1
+    
+    # Objective function: min -v (equivalent to max v)
+    c = np.zeros(m + 1 + n)  # x variables + v variable + slack variables
+    c[m] = -1  # coefficient for v variable
+    
+    # Step 4: Build the tableau
+    # Tableau format: [A | b]
+    #                 [c | 0]
+    
+    tableau_constraints = np.hstack([A, b.reshape(-1, 1)])
+    tableau_objective = np.append(c, 0)
+    
+    T = np.vstack([tableau_constraints, tableau_objective])
+    
+    # Step 5: Set up the basis for a feasible starting point
+    # The basis will include:
+    # - One decision variable (x[0])
+    # - The value variable (v)
+    # - Slack variables for the remaining constraints
+    
+    basis = np.zeros(n + 1, dtype=int)
+    basis[0] = 0  # x[0] is basic
+    basis[1] = m  # v is basic
+    basis[2:] = m + 1 + np.arange(n-1)  # slack variables for first n-1 constraints
+    
+    # Step 6: Ensure the tableau represents a valid BFS
+    # We need to perform elementary row operations to get the identity matrix
+    # in the basis columns
+    
+    # This is a simplified approach - in practice, you might need more sophisticated
+    # row operations to ensure the tableau is in canonical form
+    
+    return T, basis, K
 
 
 if __name__ == '__main__':

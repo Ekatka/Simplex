@@ -1,16 +1,13 @@
 import gymnasium as gym
-from gymnasium import spaces
 import numpy as np
-from my_simplex import _pivot_col, _pivot_row, _apply_pivot  # Your custom module with heuristics
+from gymnasium import spaces
+from simplex_solver import _pivot_col, _pivot_row, _apply_pivot
+from config import PIVOT_MAP, NUM_PIVOT_STRATEGIES
 
 class SimplexGymEnv(gym.Env):
     """
-    A custom Gym environment where an RL agent chooses pivot strategies
-    to solve linear programs via the simplex method.
+    Gym environment for the simplex method.
     """
-    metadata = {"render.modes": ["human"]}
-
-
 
     def __init__(self, A, b, c, maxiter=10000, tol=1e-9):
         super(SimplexGymEnv, self).__init__()
@@ -21,7 +18,7 @@ class SimplexGymEnv(gym.Env):
         self.maxiter = maxiter
         self.tol = tol
 
-        self.action_space = spaces.Discrete(4)  # 4 strategies
+        self.action_space = spaces.Discrete(NUM_PIVOT_STRATEGIES)  # Use constant from config
         self.observation_space = spaces.Box(
             low=-np.inf, high=np.inf,
             shape=(self.m + 1, self.n + 1), dtype=np.float64
@@ -46,7 +43,7 @@ class SimplexGymEnv(gym.Env):
         env.tol = tol
         env.nit = 0
 
-        env.action_space = spaces.Discrete(4)
+        env.action_space = spaces.Discrete(NUM_PIVOT_STRATEGIES)  # Use constant from config
         env.observation_space = spaces.Box(
             low=-np.inf, high=np.inf,
             shape=env.T.shape, dtype=np.float64
@@ -73,13 +70,8 @@ class SimplexGymEnv(gym.Env):
         return self._get_obs(), {}
 
     def step(self, action):
-        strategy_map = {
-            0: 'bland',
-            1: 'largest_coefficient',
-            2: 'largest_increase',
-            3: 'steepest_edge'
-        }
-        strategy = strategy_map[int(action)]
+        # Use PIVOT_MAP from config instead of local definition
+        strategy = PIVOT_MAP[int(action)]
         done = False
         reward = -1  # Penalize per step only
 
