@@ -1,11 +1,15 @@
 import numpy as np
 # Training parameters
-M =70
-N = 70
-EPSILON = 0.0001
-TIMESTEPS = 10_000_000
-MIN_VAL = -1
-MAX_VAL = 1
+M = 300
+N =300
+EPSILON = 0.001
+TIMESTEPS = 1_000_000
+MIN_VAL = -100
+MAX_VAL = 100
+LOAD_MODEL = False
+PREFERRED_ACTION_ID = 0
+INITIAL_BIAS = 3.0
+
 # Training settings
 N_ENVS = 4
 # Model save path template
@@ -24,4 +28,8 @@ PIVOT_MAP = {
 
 NUM_PIVOT_STRATEGIES = len(PIVOT_MAP)
 PIVOT_STRATEGY_NAMES = list(PIVOT_MAP.values())
+
+# Advanced training features
+USE_MACRO_STRATEGY = True  # Set to True to use MacroStrategyWrapper
+USE_BIAS_ANNEALING = True  # Set to True to use LogitBiasAnnealCallback
 

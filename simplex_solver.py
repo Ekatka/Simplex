@@ -241,21 +241,86 @@ def _pivot_col(T, tol=1e-9, bland=False):
     return True, np.ma.nonzero(ma == ma.min())[0][0]
 
 
-def _pivot_row(T, basis, pivcol, phase, tol=1e-9, bland=False):
+# def _pivot_row(T, basis, pivcol, phase, tol=1e-9, bland=False):
 
-    if phase == 1:
-        k = 2
-    else:
-        k = 1
-    ma = np.ma.masked_where(T[:-k, pivcol] <= tol, T[:-k, pivcol], copy=False)
-    if ma.count() == 0:
+#     if phase == 1:
+#         k = 2
+#     else:
+#         k = 1
+#     ma = np.ma.masked_where(T[:-k, pivcol] <= tol, T[:-k, pivcol], copy=False)
+#     if ma.count() == 0:
+#         return False, np.nan
+#     mb = np.ma.masked_where(T[:-k, pivcol] <= tol, T[:-k, -1], copy=False)
+#     q = mb / ma
+#     min_rows = np.ma.nonzero(q == q.min())[0]
+#     if bland:
+#         return True, min_rows[np.argmin(np.take(basis, min_rows))]
+#     return True, min_rows[0]
+def _pivot_row(T, basis, pivcol, phase, tol=1e-9, bland=False):
+    """
+    Harris two-pass ratio test for selecting the leaving row.
+
+    Parameters
+    ----------
+    T : ndarray
+        Simplex tableau.
+    basis : ndarray
+        Current basis indices (used only for Bland tie-break if requested).
+    pivcol : int
+        Entering column index.
+    phase : int
+        1 or 2; controls how many bottom rows are excluded from the ratio test.
+    tol : float
+        Positivity tolerance for the pivot column entries.
+    bland : bool
+        If True, tie-break among near-minimum ratios using smallest basis index.
+        If False (default), choose the row with the largest pivot in the admissible set.
+
+    Returns
+    -------
+    (found: bool, pivrow: int)
+    """
+    # Exclude objective rows at bottom (same as your original code)
+    k = 2 if phase == 1 else 1
+    col = T[:-k, pivcol]
+
+    # Eligible rows have strictly positive pivot column entries
+    eligible = col > tol
+    if not np.any(eligible):
         return False, np.nan
-    mb = np.ma.masked_where(T[:-k, pivcol] <= tol, T[:-k, -1], copy=False)
-    q = mb / ma
-    min_rows = np.ma.nonzero(q == q.min())[0]
+
+    b = T[:-k, -1]
+
+    # Compute ratios only for eligible rows
+    q = np.full_like(col, np.inf, dtype=np.float64)
+    q[eligible] = b[eligible] / col[eligible]
+
+    # Pass 1: find robust minimum ratio
+    q_min = np.min(q)
+    if not np.isfinite(q_min):
+        return False, np.nan
+
+    # Pass 2: define admissible set near the minimum
+    # eta: small relative tolerance; you can tweak 1e-7..1e-4 if needed
+    eta = 1e-7
+    threshold = (1.0 + eta) * q_min
+
+    admissible = (q <= threshold) & np.isfinite(q)
+    rows = np.where(admissible)[0]
+    if rows.size == 0:
+        # Fallback: strict minimizer (should rarely happen)
+        rows = np.array([int(np.argmin(q))])
+
     if bland:
-        return True, min_rows[np.argmin(np.take(basis, min_rows))]
-    return True, min_rows[0]
+        # Bland tie-break among admissible rows: smallest basis index
+        idx = rows[np.argmin(np.take(basis, rows))]
+    else:
+        # Choose numerically strongest pivot among admissible rows:
+        # largest pivot element in the entering column
+        pivots = col[rows]
+        idx = rows[np.argmax(pivots)]
+
+    return True, int(idx)
 
 
 def _apply_pivot(T, basis, pivrow, pivcol, tol=1e-9):
@@ -269,49 +334,49 @@ def _apply_pivot(T, basis, pivrow, pivcol, tol=1e-9):
 
     # The selected pivot should never lead to a pivot value less than the tol.
     if np.isclose(pivval, tol, atol=0, rtol=1e4):
-        print("\n" + "="*80)
-        print("WARNING: NUMERICAL STABILITY ISSUE DETECTED")
-        print("="*80)
+        # print("\n" + "="*80)
+        # print("WARNING: NUMERICAL STABILITY ISSUE DETECTED")
+        # print("="*80)
         
-        print(f"\nPIVOT OPERATION DETAILS:")
-        print(f"  • Pivot value: {pivval:.6e}")
-        print(f"  • Tolerance: {tol:.6e}")
-        print(f"  • Ratio (pivot/tolerance): {pivval/tol:.2f}")
-        print(f"  • Pivot row: {pivrow}")
-        print(f"  • Pivot column: {pivcol}")
+        # print(f"\nPIVOT OPERATION DETAILS:")
+        # print(f"  • Pivot value: {pivval:.6e}")
+        # print(f"  • Tolerance: {tol:.6e}")
+        # print(f"  • Ratio (pivot/tolerance): {pivval/tol:.2f}")
+        # print(f"  • Pivot row: {pivrow}")
+        # print(f"  • Pivot column: {pivcol}")
         
-        print(f"\nTABLEAU INFORMATION:")
-        print(f"  • Tableau shape: {T.shape}")
-        print(f"  • Number of rows: {T.shape[0]}")
-        print(f"  • Number of columns: {T.shape[1]}")
+        # print(f"\nTABLEAU INFORMATION:")
+        # print(f"  • Tableau shape: {T.shape}")
+        # print(f"  • Number of rows: {T.shape[0]}")
+        # print(f"  • Number of columns: {T.shape[1]}")
         
-        print(f"\nBASIS INFORMATION:")
-        print(f"  • Current basis: {basis}")
-        print(f"  • Basis size: {len(basis)}")
+        # print(f"\nBASIS INFORMATION:")
+        # print(f"  • Current basis: {basis}")
+        # print(f"  • Basis size: {len(basis)}")
         
-        print(f"\nPIVOT ELEMENT CONTEXT:")
-        print(f"  • Pivot element value: {pivval:.6e}")
-        print(f"  • Pivot row before normalization:")
-        pivot_row_before = T[pivrow] * pivval  # Reconstruct original row
-        print(f"    {pivot_row_before}")
+        # print(f"\nPIVOT ELEMENT CONTEXT:")
+        # print(f"  • Pivot element value: {pivval:.6e}")
+        # print(f"  • Pivot row before normalization:")
+        # pivot_row_before = T[pivrow] * pivval  # Reconstruct original row
+        # print(f"    {pivot_row_before}")
         
-        print(f"\nNEARBY ELEMENTS (same row):")
-        for col in range(T.shape[1]):
-            if col != pivcol:
-                val = T[pivrow, col] * pivval  # Reconstruct original value
-                if abs(val) > tol/10:  # Show elements close to tolerance
-                    print(f"    Column {col}: {val:.6e}")
+        # print(f"\nNEARBY ELEMENTS (same row):")
+        # for col in range(T.shape[1]):
+        #     if col != pivcol:
+        #         val = T[pivrow, col] * pivval  # Reconstruct original value
+        #         if abs(val) > tol/10:  # Show elements close to tolerance
+        #             print(f"    Column {col}: {val:.6e}")
         
-        print(f"\nNEARBY ELEMENTS (same column):")
-        for row in range(T.shape[0]):
-            if row != pivrow:
-                val = T[row, pivcol]
-                if abs(val) > tol/10:  # Show elements close to tolerance
-                    print(f"    Row {row}: {val:.6e}")
+        # print(f"\nNEARBY ELEMENTS (same column):")
+        # for row in range(T.shape[0]):
+        #     if row != pivrow:
+        #         val = T[row, pivcol]
+        #         if abs(val) > tol/10:  # Show elements close to tolerance
+        #             print(f"    Row {row}: {val:.6e}")
         
-        print("="*80)
-        print("END OF WARNING")
-        print("="*80 + "\n")
+        # print("="*80)
+        # print("END OF WARNING")
+        # print("="*80 + "\n")
         
         message = (
             f"The pivot operation produces a pivot value of:{pivval: .1e}, "

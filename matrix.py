@@ -15,7 +15,7 @@ class Matrix:
     # generating matrix according to params
     def generateMatrix(self):
         self.base_P = np.random.randint(self.min, self.max + 1, size=(self.m, self.n))
-        self.base_P = self.base_P*10
+        self.base_P = self.base_P
         return self.base_P
 
     def returnSize(self):
@@ -27,7 +27,7 @@ class Matrix:
     # add epsilon noise to matrix
     def generate_perturbed_matrix(self):
         noise = np.random.uniform(-self.epsilon, self.epsilon, size=(self.m, self.n))
-        noise = np.round(noise, decimals=4)
+        noise = np.round(noise, decimals=5)
         perturbed_P = self.base_P + noise
         return Matrix(self.m, self.n, self.min, self.max, epsilon=0, base_P=perturbed_P)
 
