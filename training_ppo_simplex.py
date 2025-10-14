@@ -3,7 +3,7 @@ import gymnasium as gym
 from stable_baselines3 import PPO
 from stable_baselines3.common.env_util import make_vec_env
 import os
-
+from gymnasium.wrappers import TimeLimit
 from simplex_solver import change_to_zero_sum_phase2_only, SecondPhasePivotingEnv
 from matrix import Matrix
 
@@ -13,6 +13,65 @@ from base_matrix import BASE_MATRIX
 from stable_baselines3.common.callbacks import BaseCallback
 import torch as th
 import math
+
+from stable_baselines3.common.callbacks import BaseCallback
+
+class EarlyStopWrapper(gym.Wrapper):
+    def __init__(self, env, max_degenerate_streak=100, window=200, improve_tol=1e-12):
+        super().__init__(env)
+        self.max_degenerate_streak = int(max_degenerate_streak)
+        self.window = int(window)
+        self.improve_tol = float(improve_tol)
+        self._last_obj = None
+        self._no_improve_steps = 0
+
+    def reset(self, **kwargs):
+        self._last_obj = None
+        self._no_improve_steps = 0
+        return self.env.reset(**kwargs)
+
+    def step(self, action):
+        obs, rew, done, truncated, info = self.env.step(action)
+
+        # track objective improvement
+        obj = float(info.get("objective", self.env.T[-1, -1]))
+        if self._last_obj is None:
+            self._last_obj = obj
+        else:
+            delta = self._last_obj - obj
+            if delta > self.improve_tol:
+                self._no_improve_steps = 0
+            else:
+                self._no_improve_steps += 1
+            self._last_obj = obj
+
+        # early stop on long degeneracy
+        if info.get("degenerate_streak", 0) >= self.max_degenerate_streak:
+            truncated = True
+
+        # early stop on stagnation window
+        if self._no_improve_steps >= self.window:
+            truncated = True
+
+        return obs, rew, done, truncated, info
+
+class EpisodeCounterCallback(BaseCallback):
+    def __init__(self):
+        super().__init__()
+        self.completed_this_iter = 0
+
+    def _on_rollout_start(self) -> None:
+        self.completed_this_iter = 0
+
+    def _on_step(self) -> bool:
+        infos = self.locals.get("infos", [])
+        for info in infos:
+            if "episode" in info:  # Monitor puts this when an episode ends
+                self.completed_this_iter += 1
+        return True
+
+    def _on_rollout_end(self) -> None:
+        self.logger.record("debug/episodes_finished_in_rollout", self.completed_this_iter)
 
 
 class MacroStrategyWrapper(gym.Wrapper):
@@ -66,16 +125,28 @@ def apply_initial_action_bias(model, preferred_id: int, initial_bias: float = 3.
         bias[int(preferred_id)] = float(initial_bias)
 
 
+# def create_ppo_model(vec_env, verbose=1):
+#     """Создает PPO модель с одинаковыми параметрами во всех случаях"""
+#     return PPO(
+#         "MlpPolicy",
+#         vec_env,
+#         verbose=verbose,
+#         gamma=0.999,          # longer credit assignment
+#         n_steps=2048,         # increase if memory allows
+#         batch_size=4096//N_ENVS,
+#         ent_coef=0.0,         # reduce random dithering; exploration via bias
+#         learning_rate=3e-4,
+#         clip_range=0.2,
+#     )
 def create_ppo_model(vec_env, verbose=1):
-    """Создает PPO модель с одинаковыми параметрами во всех случаях"""
     return PPO(
         "MlpPolicy",
         vec_env,
         verbose=verbose,
-        gamma=0.999,          # longer credit assignment
-        n_steps=2048,         # increase if memory allows
-        batch_size=4096//N_ENVS,
-        ent_coef=0.0,         # reduce random dithering; exploration via bias
+        gamma=0.995,          # slightly shorter horizon
+        n_steps=1024,         # more frequent updates -> more episode finishes in a rollout
+        batch_size=max(64, 2048//N_ENVS),
+        ent_coef=0.01,        # restore exploration
         learning_rate=3e-4,
         clip_range=0.2,
     )
@@ -174,9 +245,10 @@ if __name__ == "__main__":
         base_env = RandomMatrixEnv(matrix)
         if USE_MACRO_STRATEGY:
             print("Using MacroStrategyWrapper with macro_len=10")
-            return MacroStrategyWrapper(base_env, macro_len=10)
-        return base_env
-    
+            base_env = MacroStrategyWrapper(base_env, macro_len=10)
+        # HARD CAP: e.g. 2000 pivots -> truncated=True if hit
+        return TimeLimit(base_env, max_episode_steps=2000)
+
     vec_env = make_vec_env(make_env, n_envs=N_ENVS)
     
     # Initialize model in all cases
@@ -205,12 +277,12 @@ if __name__ == "__main__":
     apply_initial_action_bias(model, PREFERRED_ACTION_ID, INITIAL_BIAS)
     
     # Create callback for annealing bias if used
-    callbacks = []
+    callbacks = [EpisodeCounterCallback()]
     if USE_BIAS_ANNEALING:
         bias_callback = LogitBiasAnnealCallback(
             preferred_id=PREFERRED_ACTION_ID,
             initial_bias=INITIAL_BIAS,
-            half_life=500_000
+            half_life=200_000
         )
         callbacks.append(bias_callback)
         print("Using LogitBiasAnnealCallback for bias annealing")

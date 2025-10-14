@@ -144,9 +144,9 @@ def compute_game_value_from_strategies(matrix: Matrix, first_player_strategy, se
 
 def test_rl(matrix: Matrix):
     print("\n--- PPO Policy Evaluation ---")
-    print("Matrix P:")
-    print(pd.DataFrame(matrix.base_P).to_string(index=False, header=False))
-    print(matrix.base_P.tolist())
+    # print("Matrix P:")
+    # print(pd.DataFrame(matrix.base_P).to_string(index=False, header=False))
+    # print(matrix.base_P.tolist())
 
     model_path = MODEL_NAME_TEMPLATE.format(
         steps=TIMESTEPS,
@@ -189,6 +189,7 @@ if __name__ == "__main__":
     # print("\nTesting Matrix:")
     # print(pd.DataFrame(test_matrix.base_P).to_string(index=False, header=False))
 
-    # test_rl(test_matrix)
+
     test_fixed_strategies(test_matrix)
+    test_rl(test_matrix)
     # find_optimal_pivot_sequence_bfs(test_matrix)

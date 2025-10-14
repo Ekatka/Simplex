@@ -13,7 +13,6 @@ from _linprog_utils import (
 from config import PIVOT_MAP, NUM_PIVOT_STRATEGIES
 
 class SecondPhasePivotingEnv(gym.Env):
-
     def remove_artificial(self):
         for pivrow in [row for row in range(self.basis.size)
                        if self.basis[row] > self.T.shape[1] - 2]:
@@ -25,55 +24,139 @@ class SecondPhasePivotingEnv(gym.Env):
                 self.nit += 1
 
     def __init__(self, T, basis):
+        # Core state
         self.basis = basis
         self.T = T
         self.tol = 1e-9
         self.m = self.T.shape[1] - 1
         self.remove_artificial()
-        self.maxiter = 1_000_000
+
+        # Limits & counters
+        self.maxiter = 20_000
         self.nit = 0
+
+        # Solution buffer
         if len(self.basis[:self.m]) == 0:
             self.solution = np.empty(self.T.shape[1] - 1, dtype=np.float64)
         else:
             self.solution = np.empty(max(self.T.shape[1] - 1, max(self.basis[:self.m]) + 1),
-                                dtype=np.float64)
-        self.action_space = spaces.Discrete(NUM_PIVOT_STRATEGIES)  # Use constant from config
+                                     dtype=np.float64)
+
+        # Gym spaces
+        self.action_space = spaces.Discrete(NUM_PIVOT_STRATEGIES)
         self.observation_space = spaces.Box(
             low=-np.inf, high=np.inf,
             shape=self.T.shape, dtype=np.float64
         )
         self.complete = False
 
+        # === New: loop & progress bookkeeping ===
+        self._seen_bases = set()
+        self._last_obj = float(self.T[-1, -1])
+        self._degenerate_streak = 0
+
+        # === Tunable reward coefficients (fixed numbers, no placeholders) ===
+        self._step_penalty = 1.0          # per-step cost
+        self._improve_coef = 10.0         # scales positive objective improvement
+        self._degenerate_penalty = 0.2    # small hit on zero-improvement pivot
+        self._loop_penalty = 5.0          # larger penalty on detected cycle
+        self._success_bonus = 50.0        # terminal reward on optimality
+        self._improve_tol = 1e-12         # what counts as "no improvement"
+
+    def _basis_key(self):
+        # Small, stable key for visited-state detection
+        return tuple(int(i) for i in self.basis)
+
     def _get_obs(self):
         return self.T.copy()
 
     def reset(self, seed=None, **kwargs):
         self.nit = 0
+        self._seen_bases.clear()
+        self._last_obj = float(self.T[-1, -1])
+        self._degenerate_streak = 0
+        # Record initial basis
+        self._seen_bases.add(self._basis_key())
         return self._get_obs(), {}
 
     def step(self, action):
-        # Use PIVOT_MAP from config instead of local definition
         strategy = PIVOT_MAP[int(action)]
-        done = False
-        reward = -1  # Penalize per step only
 
+        # Base reward: per-step penalty
+        reward = -self._step_penalty
+        done = False
+        truncated = False
+
+        # === Check optimality BEFORE pivot (no entering column) ===
         pivcol_found, pivcol = _pivot_col_heuristics(self.T, strategy=strategy, tol=self.tol)
         if not pivcol_found:
+            # Optimal for Phase 2 (no negative reduced costs)
+            reward += self._success_bonus
             done = True
-            return self._get_obs(), reward, done, False, {}
+            info = {
+                "status": "optimal",
+                "nit": self.nit,
+                "objective": float(self.T[-1, -1]),
+                "degenerate_streak": self._degenerate_streak,
+            }
+            return self._get_obs(), reward, done, truncated, info
 
+        # === Choose leaving row ===
         pivrow_found, pivrow = _pivot_row(self.T, self.basis, pivcol, phase=2, tol=self.tol)
         if not pivrow_found:
+            # Unbounded or infeasible in Phase 2 context
             done = True
-            return self._get_obs(), reward, done, False, {}
+            info = {
+                "status": "no_pivot_row",
+                "nit": self.nit,
+                "objective": float(self.T[-1, -1]),
+                "degenerate_streak": self._degenerate_streak,
+            }
+            return self._get_obs(), reward, done, truncated, info
 
+        # === Apply pivot ===
+        old_obj = float(self.T[-1, -1])
         _apply_pivot(self.T, self.basis, pivrow, pivcol, tol=self.tol)
         self.nit += 1
+        new_obj = float(self.T[-1, -1])
 
+        # === Reward shaping: improvement in objective (we minimize -v) ===
+        # Improvement when new_obj < old_obj → delta positive
+        delta = old_obj - new_obj
+        if delta > self._improve_tol:
+            reward += self._improve_coef * delta
+            self._degenerate_streak = 0
+        else:
+            # Degenerate pivot (no progress)
+            reward -= self._degenerate_penalty
+            self._degenerate_streak += 1
+
+        # === Loop detection on basis ===
+        key = self._basis_key()
+        if key in self._seen_bases:
+            print("LOOP DETECTED")
+            reward -= self._loop_penalty
+            truncated = True  # cut the episode to break the cycle
+        else:
+            self._seen_bases.add(key)
+
+        # === Hard stop on iteration cap ===
         if self.nit >= self.maxiter:
             done = True
 
-        return self._get_obs(), reward, done, False, {}
+        info = {
+            "status": "running",
+            "nit": self.nit,
+            "objective": new_obj,
+            "delta_objective": delta,
+            "degenerate": (delta <= self._improve_tol),
+            "degenerate_streak": self._degenerate_streak,
+            "pivcol": int(pivcol),
+            "pivrow": int(pivrow),
+            "strategy": strategy,
+            "loop_detected": truncated,
+        }
+        return self._get_obs(), reward, done, truncated, info
 
     def render(self, mode='human'):
         print("Current Tableau:")
@@ -83,6 +166,7 @@ class SecondPhasePivotingEnv(gym.Env):
 
     def close(self):
         pass
+
 
 
 class FirstPhasePivotingEnv(gym.Env):
