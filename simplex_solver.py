@@ -102,7 +102,8 @@ class SecondPhasePivotingEnv(gym.Env):
             return self._get_obs(), reward, done, truncated, info
 
         # === Choose leaving row ===
-        pivrow_found, pivrow = _pivot_row(self.T, self.basis, pivcol, phase=2, tol=self.tol)
+        use_bland = (strategy == 'blands_rule')
+        pivrow_found, pivrow = _pivot_row(self.T, self.basis, pivcol, phase=2, tol=self.tol, bland=use_bland)
         if not pivrow_found:
             # Unbounded or infeasible in Phase 2 context
             done = True

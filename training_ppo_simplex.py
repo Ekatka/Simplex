@@ -7,7 +7,7 @@ from gymnasium.wrappers import TimeLimit
 from simplex_solver import change_to_zero_sum_phase2_only, SecondPhasePivotingEnv
 from matrix import Matrix
 
-from config import M, N, MIN_VAL, MAX_VAL, EPSILON, TIMESTEPS, N_ENVS, MODEL_NAME_TEMPLATE, NUM_PIVOT_STRATEGIES, LOAD_MODEL, PREFERRED_ACTION_ID, INITIAL_BIAS, USE_MACRO_STRATEGY, USE_BIAS_ANNEALING
+from config import M, N, MIN_VAL, MAX_VAL, EPSILON, TIMESTEPS, N_ENVS, MODEL_NAME_TEMPLATE, NUM_PIVOT_STRATEGIES, LOAD_MODEL, PREFERRED_ACTION_ID, INITIAL_BIAS, USE_MACRO_STRATEGY, USE_BIAS_ANNEALING, USE_INITIAL_ACTION_BIAS
 from base_matrix import BASE_MATRIX
 
 from stable_baselines3.common.callbacks import BaseCallback
@@ -272,10 +272,13 @@ if __name__ == "__main__":
     else:
         print("Starting training from scratch...")
         model = create_ppo_model(vec_env)
-    
-    # Apply bias in all cases
-    apply_initial_action_bias(model, PREFERRED_ACTION_ID, INITIAL_BIAS)
-    
+
+    if USE_INITIAL_ACTION_BIAS:
+        apply_initial_action_bias(model, PREFERRED_ACTION_ID, INITIAL_BIAS)
+        print(f"Applied initial bias of {INITIAL_BIAS} to action ID {PREFERRED_ACTION_ID}")
+    else:
+        print("Initial action bias disabled (USE_INITIAL_ACTION_BIAS = False)")
+
     # Create callback for annealing bias if used
     callbacks = [EpisodeCounterCallback()]
     if USE_BIAS_ANNEALING:

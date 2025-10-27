@@ -163,7 +163,7 @@ def test_rl(matrix: Matrix):
     done = False
     while not done:
         action, _ = model.predict(obs)
-        print(f"[RL] Action: {PIVOT_MAP[int(action)]}")
+        # print(f"[RL] Action: {PIVOT_MAP[int(action)]}")
         obs, _, done, _, _ = env.step(action)
 
     # Extract strategies
