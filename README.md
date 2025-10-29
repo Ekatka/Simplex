@@ -117,26 +117,9 @@ Encapsulates logic related to creating, modifying, and perturbing game matrices
 
 This script evaluates the performance of pivoting strategies, both fixed and learned
 
----
-
-#### Key Components
-
-- **BFS Search (`find_optimal_pivot_sequence_bfs`)**
-  - Exhaustively searches for the shortest sequence of pivot actions using breadth-first search.
-  - Stops when a feasible solution is reached or `BFS_DEPTH` is exceeded.
-
-- **Fixed Strategy Evaluation (`run_fixed_strategy`)**
-  - Tests each of the 4 pivoting rules: Bland, Largest Coefficient, Largest Increase, Steepest Edge.
-  - Outputs step count and final game value.
-
-- **RL Policy Evaluation (`test_rl`)**
-  - Loads a trained PPO model and steps through the environment using learned pivoting choices.
-  - Reports actions taken, game value, and step count.
-
-
 ### `config.py`
 
 Is the main settings file, needs the size of the matrix, epsilon, if the base matrix is provided, the training would be run on it, otherwise, a random matrix would be generated.
 
-Provides filename template for saving the trained model, the testing file loads the model automatically according to the template.  
+Provides filename template for saving the trained model, the testing file loads the model automatically according to the template.
 

@@ -598,260 +598,200 @@ def first_to_second(T, basis, av):
         print(f"[solve_zero_sum] Pseudo-objective: {T[-1, -1]:.2e} vs adaptive_tol {adaptive_tol:.1e}, status={status}")
         return None
 
-
 def change_to_zero_sum_direct_phase2(GameMatrix):
     """
-    Convert a zero-sum game matrix directly to Phase 2 tableau without Phase 1.
-    This function builds a trivial feasible BFS and returns a Phase 2 tableau
-    ready for optimization, in the same format as first_to_second would produce.
-    
-    Args:
-        GameMatrix: Payoff matrix M (m x n)
-    
-    Returns:
-        T: Phase 2 tableau ready for optimization
-        basis: Basis indices for the BFS
-        None: No artificial variables needed (av is None for compatibility)
+    Convert a zero-sum game matrix directly to a canonical Phase 2 tableau
+    without Phase 1 by constructing a trivial feasible BFS and then
+    canonicalizing the tableau.
+    Returns (T, basis, None).
     """
     m, n = GameMatrix.shape
-    
-    # Step 1: Compute K so that B = M + K*11^T >= 0
+
+    # Shift so B >= 0
     min_element = np.min(GameMatrix)
-    K = max(0, -min_element + 1e-6)
-    
-    # Step 2: Create matrix B = M + K*11^T
+    K = max(0.0, -min_element + 1e-6)
     B = GameMatrix + K
-    
-    # Step 3: Convert to standard form LP exactly as change_to_zero_sum does
-    # The LP is: max v subject to B^T * x >= v, sum(x) = 1, x >= 0
-    # This is equivalent to: min -v subject to -B^T * x + v <= 0, sum(x) = 1, x >= 0
-    
-    # Variables: x (m variables) + v (1 variable) + slack variables (n variables)
-    # Total variables: m + 1 + n
-    
-    # Build constraint matrix A
-    # First n rows: -B^T * x + v + s_i = 0 (where s_i are slack variables)
-    # Last row: sum(x) = 1
-    
-    # Slack variables for the first n constraints
+
+    # Build standard-form A, b, c for:
+    #  -B^T x + v + s = 0  (n rows)
+    #   1^T x        = 1  (1 row)
     slack_matrix = np.eye(n)
-    
-    # Build the constraint matrix
-    A_constraints = np.hstack([-B.T, np.ones((n, 1)), slack_matrix])
-    A_sum = np.hstack([np.ones(m), np.zeros(1), np.zeros(n)])
-    
-    A = np.vstack([A_constraints, A_sum])
-    
-    # Right-hand side vector
+    A_constraints = np.hstack([-B.T, np.ones((n, 1)), slack_matrix])     # n x (m+1+n)
+    A_sum         = np.hstack([np.ones(m), np.zeros(1), np.zeros(n)])     # 1 x (m+1+n)
+    A = np.vstack([A_constraints, A_sum])                                 # (n+1) x (m+1+n)
+
     b = np.zeros(n + 1)
-    b[-1] = 1  # sum(x) = 1
-    
-    # Objective function: min -v (equivalent to max v)
-    c = np.zeros(m + 1 + n)  # x variables + v variable + slack variables
-    c[m] = -1  # coefficient for v variable
-    
-    # Step 4: Build the tableau
-    # Tableau format: [A | b]
-    #                 [c | 0]
-    
-    tableau_constraints = np.hstack([A, b.reshape(-1, 1)])
-    tableau_objective = np.append(c, 0)
-    
-    T = np.vstack([tableau_constraints, tableau_objective])
-    
-    # Step 5: Set up the basis for a feasible starting point
-    # The basis will include:
-    # - One decision variable (x[0])
-    # - The value variable (v)
-    # - Slack variables for the remaining constraints
-    
-    basis = np.zeros(n + 1, dtype=int)
-    basis[0] = 0  # x[0] is basic
-    basis[1] = m  # v is basic
-    basis[2:] = m + 1 + np.arange(n-1)  # slack variables for first n-1 constraints
-    
-    # Step 6: Ensure the tableau represents a valid BFS
-    # We need to perform elementary row operations to get the identity matrix
-    # in the basis columns
-    
-    # This is a simplified approach - in practice, you might need more sophisticated
-    # row operations to ensure the tableau is in canonical form
-    
+    b[-1] = 1.0
+
+    c = np.zeros(m + 1 + n)
+    c[m] = -1.0   # minimize -v
+
+    # Choose a provably feasible, nonsingular basis:
+    #  - First n rows: take all slacks s_j basic (columns m+1 ... m+n)
+    #  - Last row (sum): take x_0 basic (column 0)
+    # This yields B = [[I_n, -B^T[:,0]]; [0,...,0, 1]], invertible,
+    # and basic values x0=1, s = B^T[:,0] >= 0 (since B>=0).
+    basis = np.empty(n + 1, dtype=int)
+    basis[:n] = m + 1 + np.arange(n)  # all slacks
+    basis[-1] = 0                     # x[0]
+
+    # Canonicalize
+    T, basis = build_phase2_tableau_canonical(A, b, c, basis)
+
+    # No artificial variables in this path
     return T, basis, None
 
 
+def build_phase2_tableau_canonical(A, b, c, basis, tol=1e-12):
+    """
+    Given equality-form constraints A x = b (with x >= 0), an objective c^T x,
+    and a chosen basis 'basis' (one column index per row), return the canonical
+    Phase-2 simplex tableau:
+        [ I | B^{-1}N | B^{-1}b ]
+        [ 0 |  r_N     |   z0   ]
+    where r_N = c_N - c_B B^{-1} N, z0 = c_B^T B^{-1} b.
+    Assumes 'basis' selects a nonsingular square submatrix B of A.
+
+    Args:
+        A : (m x n) ndarray
+        b : (m,) ndarray
+        c : (n,) ndarray
+        basis : (m,) ndarray of int column indices
+        tol : float, numerical guard
+
+    Returns:
+        T  : ((m+1) x (n+1)) ndarray, canonical tableau
+        basis : unchanged, but now consistent with T’s identity block
+    """
+    A = np.asarray(A, dtype=float)
+    b = np.asarray(b, dtype=float)
+    c = np.asarray(c, dtype=float)
+    basis = np.asarray(basis, dtype=int)
+
+    m, n = A.shape
+    if basis.size != m:
+        raise ValueError("basis length must equal number of rows m")
+
+    # Partition columns into basis and nonbasis
+    B_cols = basis
+    N_cols = np.array([j for j in range(n) if j not in set(B_cols)], dtype=int)
+
+    # Extract blocks
+    B = A[:, B_cols]              # (m x m)
+    N = A[:, N_cols]              # (m x (n-m))
+    c_B = c[B_cols]               # (m,)
+    c_N = c[N_cols]               # (n-m,)
+
+    # Invert B (or solve)
+    try:
+        B_inv = np.linalg.inv(B)
+    except np.linalg.LinAlgError as e:
+        raise ValueError("Chosen basis is singular; pick a different feasible basis.") from e
+
+    # Canonical blocks
+    B_inv_N = B_inv @ N           # (m x (n-m))
+    B_inv_b = B_inv @ b           # (m,)
+
+    # Objective reduction
+    r_N = c_N - c_B @ B_inv_N     # (n-m,)
+    z0  = c_B @ B_inv_b           # scalar
+
+    # Assemble the full tableau columns in original variable order
+    # Start with zeros; we will fill basis and nonbasis locations.
+    top_left = np.zeros((m, n))
+    # Put identity in basis columns
+    for i, col in enumerate(B_cols):
+        top_left[i, col] = 1.0
+    # Put B^{-1}N into nonbasis columns
+    for j_in, col in enumerate(N_cols):
+        top_left[:, col] = B_inv_N[:, j_in]
+
+    # RHS
+    rhs = B_inv_b.reshape(-1, 1)
+
+    # Objective row in original variable order
+    obj_row = np.zeros(n)
+    # Basic reduced costs are zero by construction
+    for j_in, col in enumerate(N_cols):
+        obj_row[col] = r_N[j_in]
+
+    # Build tableau [ A' | b' ; obj | z0 ]
+    T = np.vstack([
+        np.hstack([top_left, rhs]),
+        np.hstack([obj_row, np.array([z0])])
+    ])
+
+    # Tiny cleanup: zero-out near-zeros for numerical neatness
+    T[np.abs(T) < tol] = 0.0
+    return T, basis
+
 def build_trivial_bfs_zero_sum_game(GameMatrix):
     """
-    Build a trivial feasible basic feasible solution (BFS) for zero-sum games.
-    This function computes K so that B = M + K*11^T >= 0, then constructs
-    a Phase 2 tableau directly from this BFS.
-    
-    Args:
-        GameMatrix: Payoff matrix M (m x n)
-    
-    Returns:
-        T: Phase 2 tableau ready for optimization
-        basis: Basis indices for the BFS
+    Build a canonical Phase 2 tableau for the zero-sum game using the
+    trivial pure strategy x = e_0 as a feasible BFS.
+    Returns (T, basis).
     """
     m, n = GameMatrix.shape
-    
-    # Step 1: Compute K so that B = M + K*11^T >= 0
-    # We need K >= -min(M) to ensure all elements are non-negative
+
+    # Shift so B >= 0
     min_element = np.min(GameMatrix)
-    K = max(0, -min_element + 1e-6)  # Add small epsilon for numerical stability
-    
-    # Step 2: Create matrix B = M + K*11^T
+    K = max(0.0, -min_element + 1e-6)
     B = GameMatrix + K
-    
-    # Step 3: Convert to standard form LP
-    # The LP is: max v subject to B^T * x >= v, sum(x) = 1, x >= 0
-    # This is equivalent to: min -v subject to -B^T * x + v <= 0, sum(x) = 1, x >= 0
-    
-    # Constraints: -B^T * x + v <= 0 (n constraints)
-    # Constraint: sum(x) = 1 (1 constraint)
-    # Variables: x (m variables) + v (1 variable) + slack variables (n+1 variables)
-    
-    # Build constraint matrix A
-    # First n rows: -B^T * x + v + s_i = 0 (where s_i are slack variables)
-    # Last row: sum(x) = 1
-    
-    # Slack variables for the first n constraints
+
+    # Standard-form A, b, c as above
     slack_matrix = np.eye(n)
-    
-    # Build the constraint matrix
     A_constraints = np.hstack([-B.T, np.ones((n, 1)), slack_matrix])
-    A_sum = np.hstack([np.ones(m), np.zeros(1), np.zeros(n)])
-    
+    A_sum         = np.hstack([np.ones(m), np.zeros(1), np.zeros(n)])
     A = np.vstack([A_constraints, A_sum])
-    
-    # Right-hand side vector
+
     b = np.zeros(n + 1)
-    b[-1] = 1  # sum(x) = 1
-    
-    # Objective function: min -v (equivalent to max v)
-    c = np.zeros(m + 1 + n)  # x variables + v variable + slack variables
-    c[m] = -1  # coefficient for v variable
-    
-    # Step 4: Choose starting basis
-    # We'll use the first pure strategy (row 0) as starting basis
-    # Set x[0] = 1/min(B[0, :]), all other decision vars = 0
-    
-    # Find the minimum element in the first row of B
-    min_first_row = np.min(B[0, :])
-    x0_val = 1.0 / min_first_row if min_first_row > 0 else 1.0
-    
-    # Set up the starting solution
-    x_solution = np.zeros(m)
-    x_solution[0] = x0_val
-    
-    # Compute v value: v = min(B^T * x)
-    v_val = np.min(B.T @ x_solution)
-    
-    # Compute slack variables: s = B^T * x - v
-    slack_solution = B.T @ x_solution - v_val
-    
-    # Step 5: Build the tableau
-    # Tableau format: [A | b]
-    #                 [c | 0]
-    
-    tableau_constraints = np.hstack([A, b.reshape(-1, 1)])
-    tableau_objective = np.append(c, 0)
-    
-    T = np.vstack([tableau_constraints, tableau_objective])
-    
-    # Step 6: Set up the basis
-    # The basis will include:
-    # - The first decision variable (x[0])
-    # - The value variable (v)
-    # - Slack variables for the first n-1 constraints
-    # - The last constraint (sum(x) = 1) will be satisfied by the basis
-    
-    basis = np.zeros(n + 1, dtype=int)
-    basis[0] = 0  # x[0] is basic
-    basis[1] = m  # v is basic
-    basis[2:] = m + 1 + np.arange(n-1)  # slack variables for first n-1 constraints
-    
+    b[-1] = 1.0
+
+    c = np.zeros(m + 1 + n)
+    c[m] = -1.0
+
+    # Same feasible, nonsingular basis: all slacks + x0
+    basis = np.empty(n + 1, dtype=int)
+    basis[:n] = m + 1 + np.arange(n)
+    basis[-1] = 0
+
+    # Canonicalize
+    T, basis = build_phase2_tableau_canonical(A, b, c, basis)
     return T, basis
 
 
 def change_to_zero_sum_phase2_only(GameMatrix):
     """
-    Convert a zero-sum game matrix directly to Phase 2 tableau without Phase 1.
-    This function simulates the result of first_to_second by creating a tableau
-    in the exact format that would be produced after removing artificial variables.
-    
-    Args:
-        GameMatrix: Payoff matrix M (m x n)
-    
-    Returns:
-        T: Phase 2 tableau ready for optimization
-        basis: Basis indices for the BFS
-        K: The constant shift applied to M (needed for game value calculation)
+    Convert a zero-sum game matrix directly to a canonical Phase 2 tableau
+    (same output shape as first_to_second would produce after removing AVs).
+    Returns (T, basis, K).
     """
     m, n = GameMatrix.shape
-    
-    # Step 1: Compute K so that B = M + K*11^T >= 0
+
+    # Shift so B >= 0 and keep K for value unshift later
     min_element = np.min(GameMatrix)
-    K = max(0, -min_element + 1e-6)
-    
-    # Step 2: Create matrix B = M + K*11^T
+    K = max(0.0, -min_element + 1e-6)
     B = GameMatrix + K
-    
-    # Step 3: Convert to standard form LP exactly as change_to_zero_sum does
-    # The LP is: max v subject to B^T * x >= v, sum(x) = 1, x >= 0
-    # This is equivalent to: min -v subject to -B^T * x + v <= 0, sum(x) = 1, x >= 0
-    
-    # Variables: x (m variables) + v (1 variable) + slack variables (n variables)
-    # Total variables: m + 1 + n
-    
-    # Build constraint matrix A
-    # First n rows: -B^T * x + v + s_i = 0 (where s_i are slack variables)
-    # Last row: sum(x) = 1
-    
-    # Slack variables for the first n constraints
+
+    # Standard-form A, b, c
     slack_matrix = np.eye(n)
-    
-    # Build the constraint matrix
     A_constraints = np.hstack([-B.T, np.ones((n, 1)), slack_matrix])
-    A_sum = np.hstack([np.ones(m), np.zeros(1), np.zeros(n)])
-    
+    A_sum         = np.hstack([np.ones(m), np.zeros(1), np.zeros(n)])
     A = np.vstack([A_constraints, A_sum])
-    
-    # Right-hand side vector
+
     b = np.zeros(n + 1)
-    b[-1] = 1  # sum(x) = 1
-    
-    # Objective function: min -v (equivalent to max v)
-    c = np.zeros(m + 1 + n)  # x variables + v variable + slack variables
-    c[m] = -1  # coefficient for v variable
-    
-    # Step 4: Build the tableau
-    # Tableau format: [A | b]
-    #                 [c | 0]
-    
-    tableau_constraints = np.hstack([A, b.reshape(-1, 1)])
-    tableau_objective = np.append(c, 0)
-    
-    T = np.vstack([tableau_constraints, tableau_objective])
-    
-    # Step 5: Set up the basis for a feasible starting point
-    # The basis will include:
-    # - One decision variable (x[0])
-    # - The value variable (v)
-    # - Slack variables for the remaining constraints
-    
-    basis = np.zeros(n + 1, dtype=int)
-    basis[0] = 0  # x[0] is basic
-    basis[1] = m  # v is basic
-    basis[2:] = m + 1 + np.arange(n-1)  # slack variables for first n-1 constraints
-    
-    # Step 6: Ensure the tableau represents a valid BFS
-    # We need to perform elementary row operations to get the identity matrix
-    # in the basis columns
-    
-    # This is a simplified approach - in practice, you might need more sophisticated
-    # row operations to ensure the tableau is in canonical form
-    
+    b[-1] = 1.0
+
+    c = np.zeros(m + 1 + n)
+    c[m] = -1.0
+
+    # Basis: all slacks + x0 (same reasoning as above)
+    basis = np.empty(n + 1, dtype=int)
+    basis[:n] = m + 1 + np.arange(n)
+    basis[-1] = 0
+
+    # Canonicalize
+    T, basis = build_phase2_tableau_canonical(A, b, c, basis)
     return T, basis, K
 
 

@@ -174,8 +174,8 @@ def test_rl(matrix: Matrix):
     game_value = compute_game_value_from_strategies(matrix, first_player_strategy, second_player_strategy)
     
     print(f"[RL] Game Value: {game_value:.6f}")
-    print("[RL] First Player Strategy:", first_player_strategy)
-    print("[RL] Second Player Strategy:", second_player_strategy)
+    # print("[RL] First Player Strategy:", first_player_strategy)
+    # print("[RL] Second Player Strategy:", second_player_strategy)
     print(f"[RL] Steps Taken: {env.nit}")
     
 

@@ -7,7 +7,7 @@ from gymnasium.wrappers import TimeLimit
 from simplex_solver import change_to_zero_sum_phase2_only, SecondPhasePivotingEnv
 from matrix import Matrix
 
-from config import M, N, MIN_VAL, MAX_VAL, EPSILON, TIMESTEPS, N_ENVS, MODEL_NAME_TEMPLATE, NUM_PIVOT_STRATEGIES, LOAD_MODEL, PREFERRED_ACTION_ID, INITIAL_BIAS, USE_MACRO_STRATEGY, USE_BIAS_ANNEALING, USE_INITIAL_ACTION_BIAS
+from config import M, N, MIN_VAL, MAX_VAL, EPSILON, TIMESTEPS, N_ENVS, MODEL_NAME_TEMPLATE, NUM_PIVOT_STRATEGIES, LOAD_MODEL, PREFERRED_ACTION_ID, INITIAL_BIAS, USE_MACRO_STRATEGY, USE_BIAS_ANNEALING, USE_INITIAL_ACTION_BIAS, USE_HISTORY_TRACKING, HISTORY_SIZE, NO_IMPROVE_STEPS
 from base_matrix import BASE_MATRIX
 
 from stable_baselines3.common.callbacks import BaseCallback
@@ -118,6 +118,130 @@ class LogitBiasAnnealCallback(BaseCallback):
         return True
 
 
+class HistoryTrackerCallback(BaseCallback):
+    """
+    Tracks history of the last N steps and prints it when the objective function doesn't improve.
+    Tracks only the first env from vectorized environment.
+    """
+    def __init__(self, history_size: int = 20, no_improve_steps: int = 100, improve_tol: float = 1e-12):
+        super().__init__()
+        self.history_size = int(history_size)
+        self.no_improve_steps = int(no_improve_steps)
+        self.improve_tol = float(improve_tol)
+
+        # History of last steps
+        self.history = []
+        self._last_obj = None
+        self._no_improve_counter = 0
+        self._printed_this_episode = False
+
+    def _on_step(self) -> bool:
+        infos = self.locals.get("infos", [])
+        actions = self.locals.get("actions", [])
+        rewards = self.locals.get("rewards", [])
+
+        # Track only the first env (index 0)
+        if infos and len(infos) > 0:
+            info = infos[0]
+
+            # If episode completed - reset for next episode
+            if "episode" in info:
+                self._last_obj = None
+                self._no_improve_counter = 0
+                self._printed_this_episode = False
+                self.history = []
+                return True
+
+            # Get information about current step
+            obj = info.get("objective")
+            action = actions[0] if actions is not None and len(actions) > 0 else None
+            reward = rewards[0] if rewards is not None and len(rewards) > 0 else None
+            strategy = info.get("strategy", "unknown")
+            degenerate = info.get("degenerate", False)
+            nit = info.get("nit", 0)
+
+            # Add step to history
+            step_info = {
+                "nit": nit,
+                "objective": obj,
+                "action": action,
+                "strategy": strategy,
+                "reward": reward,
+                "degenerate": degenerate
+            }
+            self.history.append(step_info)
+
+            # Keep only last history_size steps
+            if len(self.history) > self.history_size:
+                self.history.pop(0)
+
+            # Check objective function improvement
+            if self._last_obj is not None and obj is not None:
+                delta = self._last_obj - obj
+                if delta > self.improve_tol:
+                    # Improvement detected - reset counter
+                    self._no_improve_counter = 0
+                else:
+                    # No improvement - increment counter
+                    self._no_improve_counter += 1
+
+            if obj is not None:
+                self._last_obj = obj
+
+            # Print history if no improvement and not yet printed in this episode
+            if self._no_improve_counter >= self.no_improve_steps and not self._printed_this_episode:
+                self._print_history()
+                self._printed_this_episode = True
+
+        return True
+
+    def _print_history(self):
+        """
+        Prints the history of last steps
+        """
+        if not self.history:
+            return
+
+        print("\n" + "="*80)
+        print(f"Objective hasn't improved for {self._no_improve_counter} steps")
+        print(f"Last {len(self.history)} steps:")
+        print("="*80)
+        print(f"{'Step':<8} {'Objective':<15} {'Action':<10} {'Strategy':<20} {'Reward':<10} {'Degenerate':<12}")
+        print("-"*80)
+
+        from config import PIVOT_MAP
+
+        for i, step in enumerate(self.history):
+            nit = step.get("nit", "N/A")
+            obj = step.get("objective", "N/A")
+            action = step.get("action", "N/A")
+            strategy = step.get("strategy", "N/A")
+            reward = step.get("reward", "N/A")
+            degenerate = step.get("degenerate", False)
+
+            # Format values
+            if isinstance(obj, (int, float)):
+                obj_str = f"{obj:.8e}"
+            else:
+                obj_str = str(obj)
+
+            if isinstance(action, (int, np.integer)):
+                action_name = PIVOT_MAP.get(int(action), f"act_{action}")
+            else:
+                action_name = str(action)
+
+            if isinstance(reward, (int, float)):
+                reward_str = f"{reward:.4f}"
+            else:
+                reward_str = str(reward)
+
+            degenerate_str = "Yes" if degenerate else "No"
+
+            print(f"{nit:<8} {obj_str:<15} {action_name:<10} {strategy:<20} {reward_str:<10} {degenerate_str:<12}")
+
+        print("="*80 + "\n")
+
+
 def apply_initial_action_bias(model, preferred_id: int, initial_bias: float = 3.0):
     with th.no_grad():
         bias = model.policy.action_net.bias
@@ -125,8 +249,7 @@ def apply_initial_action_bias(model, preferred_id: int, initial_bias: float = 3.
         bias[int(preferred_id)] = float(initial_bias)
 
 
-# def create_ppo_model(vec_env, verbose=1):
-#     """Создает PPO модель с одинаковыми параметрами во всех случаях"""
+# def create_ppo_model(vec_env, verbose=1)
 #     return PPO(
 #         "MlpPolicy",
 #         vec_env,
@@ -279,8 +402,9 @@ if __name__ == "__main__":
     else:
         print("Initial action bias disabled (USE_INITIAL_ACTION_BIAS = False)")
 
-    # Create callback for annealing bias if used
+    # Create callbacks
     callbacks = [EpisodeCounterCallback()]
+    
     if USE_BIAS_ANNEALING:
         bias_callback = LogitBiasAnnealCallback(
             preferred_id=PREFERRED_ACTION_ID,
@@ -289,6 +413,14 @@ if __name__ == "__main__":
         )
         callbacks.append(bias_callback)
         print("Using LogitBiasAnnealCallback for bias annealing")
+    
+    if USE_HISTORY_TRACKING:
+        history_callback = HistoryTrackerCallback(
+            history_size=HISTORY_SIZE,
+            no_improve_steps=NO_IMPROVE_STEPS
+        )
+        callbacks.append(history_callback)
+        print(f"Using HistoryTrackerCallback (history_size={HISTORY_SIZE}, no_improve_steps={NO_IMPROVE_STEPS})")
     
        
     if callbacks:
