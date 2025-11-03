@@ -3,6 +3,7 @@ import numpy as np
 from warnings import warn
 import scipy.sparse as sps
 from collections import namedtuple
+
 from gymnasium import spaces
 from stable_baselines3.common.type_aliases import GymEnv
 
@@ -44,11 +45,6 @@ class SecondPhasePivotingEnv(gym.Env):
 
         # Gym spaces
         self.action_space = spaces.Discrete(NUM_PIVOT_STRATEGIES)
-        self.observation_space = spaces.Box(
-            low=-np.inf, high=np.inf,
-            shape=self.T.shape, dtype=np.float64
-        )
-        self.complete = False
 
         # === New: loop & progress bookkeeping ===
         self._seen_bases = set()
@@ -63,24 +59,121 @@ class SecondPhasePivotingEnv(gym.Env):
         self._success_bonus = 50.0        # terminal reward on optimality
         self._improve_tol = 1e-12         # what counts as "no improvement"
 
+        # === New: sizes and last action for richer observations ===
+        self._n_vars = self.T.shape[1] - 1        # all decision columns (exclude RHS)
+        self._m_rows = self.T.shape[0] - 1        # constraint rows (exclude objective)
+        self._last_action = -1                    # -1 means "no previous action"
+
+        # === New: Dict observation space with explicit features ===
+        # Keep the full tableau for completeness + add compact, informative channels.
+        self.observation_space = spaces.Dict({
+            # Full simplex tableau (as before)
+            "tableau": spaces.Box(
+                low=-np.inf, high=np.inf,
+                shape=self.T.shape, dtype=np.float64
+            ),
+            # Basis indicator (1 for basic columns, else 0)
+            "basis_onehot": spaces.Box(
+                low=0.0, high=1.0,
+                shape=(self._n_vars,), dtype=np.float32
+            ),
+            # Reduced costs (objective row excluding RHS)
+            "reduced_costs": spaces.Box(
+                low=-np.inf, high=np.inf,
+                shape=(self._n_vars,), dtype=np.float64
+            ),
+            # Scalars (normalized where sensible)
+            "objective": spaces.Box(
+                low=-np.inf, high=np.inf,
+                shape=(1,), dtype=np.float64
+            ),
+            "delta_objective": spaces.Box(
+                low=-np.inf, high=np.inf,
+                shape=(1,), dtype=np.float64
+            ),
+            "nit_norm": spaces.Box(
+                low=0.0, high=1.0,
+                shape=(1,), dtype=np.float32
+            ),
+            "degenerate_streak": spaces.Box(
+                low=0.0, high=np.inf,
+                shape=(1,), dtype=np.float32
+            ),
+            "loop_flag": spaces.Box(
+                low=0.0, high=1.0,
+                shape=(1,), dtype=np.float32
+            ),
+            # Last action one-hot (size = number of pivot strategies)
+            "last_action_onehot": spaces.Box(
+                low=0.0, high=1.0,
+                shape=(int(NUM_PIVOT_STRATEGIES),), dtype=np.float32
+            ),
+            # Optional: shift K if attached by the wrapper/creator; else 0.0
+            "shift_K": spaces.Box(
+                low=0.0, high=np.inf,
+                shape=(1,), dtype=np.float64
+            ),
+        })
+
+        self.complete = False
+
     def _basis_key(self):
         # Small, stable key for visited-state detection
         return tuple(int(i) for i in self.basis)
 
+    # === New: helpers to build rich-observation channels ===
+    def _basis_onehot(self):
+        vec = np.zeros(self._n_vars, dtype=np.float32)
+        # Guard against out-of-range indices; keep only in [0, _n_vars-1]
+        for col in self.basis:
+            c = int(col)
+            if 0 <= c < self._n_vars:
+                vec[c] = 1.0
+        return vec
+
+    def _last_action_onehot(self):
+        v = np.zeros(int(NUM_PIVOT_STRATEGIES), dtype=np.float32)
+        if 0 <= self._last_action < NUM_PIVOT_STRATEGIES:
+            v[self._last_action] = 1.0
+        return v
+
+    def _nit_norm(self):
+        return np.array([min(1.0, float(self.nit) / float(self.maxiter))], dtype=np.float32)
+
     def _get_obs(self):
-        return self.T.copy()
+        # Pack a Dict observation with tableau + structured features
+        tableau = self.T.copy()
+        rc = tableau[-1, :-1].copy()
+        obj = float(tableau[-1, -1])
+        delta = float(self._last_obj - obj)  # positive if improved
+
+        obs = {
+            "tableau": tableau,
+            "basis_onehot": self._basis_onehot(),
+            "reduced_costs": rc,
+            "objective": np.array([obj], dtype=np.float64),
+            "delta_objective": np.array([delta], dtype=np.float64),
+            "nit_norm": self._nit_norm(),
+            "degenerate_streak": np.array([float(self._degenerate_streak)], dtype=np.float32),
+            "loop_flag": np.array([1.0 if self._basis_key() in self._seen_bases else 0.0], dtype=np.float32),
+            "last_action_onehot": self._last_action_onehot(),
+            "shift_K": np.array([float(getattr(self, "K", 0.0) or 0.0)], dtype=np.float64),
+        }
+        return obs
 
     def reset(self, seed=None, **kwargs):
         self.nit = 0
         self._seen_bases.clear()
         self._last_obj = float(self.T[-1, -1])
         self._degenerate_streak = 0
+        self._last_action = -1
         # Record initial basis
         self._seen_bases.add(self._basis_key())
         return self._get_obs(), {}
 
     def step(self, action):
-        strategy = PIVOT_MAP[int(action)]
+        self._last_action = int(action)
+        strategy = PIVOT_MAP[self._last_action]
 
         # Base reward: per-step penalty
         reward = -self._step_penalty
@@ -145,6 +238,9 @@ class SecondPhasePivotingEnv(gym.Env):
         if self.nit >= self.maxiter:
             done = True
 
+        # Update last objective after computing delta and rewards
+        self._last_obj = new_obj
+
         info = {
             "status": "running",
             "nit": self.nit,
@@ -167,6 +263,7 @@ class SecondPhasePivotingEnv(gym.Env):
 
     def close(self):
         pass
+
 
 
 

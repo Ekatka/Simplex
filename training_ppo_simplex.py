@@ -6,6 +6,8 @@ import os
 from gymnasium.wrappers import TimeLimit
 from simplex_solver import change_to_zero_sum_phase2_only, SecondPhasePivotingEnv
 from matrix import Matrix
+from config import MATRIX_MODE, TOEPLITZ_RHO, TOEPLITZ_SIGNED, TOEPLITZ_ANTISYMMETRIC, TOEPLITZ_BAND
+
 
 from config import M, N, MIN_VAL, MAX_VAL, EPSILON, TIMESTEPS, N_ENVS, MODEL_NAME_TEMPLATE, NUM_PIVOT_STRATEGIES, LOAD_MODEL, PREFERRED_ACTION_ID, INITIAL_BIAS, USE_MACRO_STRATEGY, USE_BIAS_ANNEALING, USE_INITIAL_ACTION_BIAS, USE_HISTORY_TRACKING, HISTORY_SIZE, NO_IMPROVE_STEPS
 from base_matrix import BASE_MATRIX
@@ -254,46 +256,49 @@ def apply_initial_action_bias(model, preferred_id: int, initial_bias: float = 3.
 #         "MlpPolicy",
 #         vec_env,
 #         verbose=verbose,
-#         gamma=0.999,          # longer credit assignment
-#         n_steps=2048,         # increase if memory allows
+#         gamma=0.999,          # longer credit assignment#         n_steps=2048,         # increase if memory allows
 #         batch_size=4096//N_ENVS,
 #         ent_coef=0.0,         # reduce random dithering; exploration via bias
 #         learning_rate=3e-4,
-#         clip_range=0.2,
+#         clip_range=0.2
 #     )
 def create_ppo_model(vec_env, verbose=1):
+    # Optional: small, sane network; SB3 will first Flatten the dict via a MultiInput extractor
+    policy_kwargs = dict(
+        net_arch=dict(pi=[128, 128], vf=[128, 128])
+    )
     return PPO(
-        "MlpPolicy",
+        "MultiInputPolicy",          # <-- required for Dict observation spaces
         vec_env,
         verbose=verbose,
-        gamma=0.995,          # slightly shorter horizon
-        n_steps=1024,         # more frequent updates -> more episode finishes in a rollout
+        gamma=0.995,                 # slightly shorter horizon
+        n_steps=1024,                # more frequent updates -> more episode finishes in a rollout
         batch_size=max(64, 2048//N_ENVS),
-        ent_coef=0.01,        # restore exploration
-        learning_rate=3e-4,
+        ent_coef=0.01,               # restore exploration
+        learning_rate=3e-5,
         clip_range=0.2,
+        policy_kwargs=policy_kwargs
     )
-
 
 class RandomMatrixEnv(SecondPhasePivotingEnv):
     def __init__(self, matrix: Matrix):
         self.matrix = matrix
         self.epsilon = matrix.epsilon
         self.K = None
-        self.nit = 0        
+        self.nit = 0
 
         self._init_env()
-        
+
         super().__init__(self.T, self.basis)
 
     def _init_env(self, seed=None):
         self.nit = 0
-        max_attempts = 20 
+        max_attempts = 20
         for attempt in range(max_attempts):
             try:
                 perturbed_P = self.matrix.generate_perturbed_matrix()
                 npMatrix = perturbed_P.base_P
-            
+
                 res = change_to_zero_sum_phase2_only(npMatrix)
                 if res is not None:
                     self.T, self.basis, self.K = res
@@ -325,16 +330,16 @@ def update_base_matrix(matrix_data):
     matrix_content.append("# Base matrix for simplex algorithm testing\n")
     matrix_content.append("# This matrix is generated automatically during training\n")
     matrix_content.append("BASE_MATRIX = np.array([\n")
-    
+
     for i, row in enumerate(matrix_data):
         row_str = "    [" + ", ".join(f"{val:.3f}" for val in row) + "]"
         if i == len(matrix_data) - 1:
             matrix_content.append(f"{row_str}\n")
         else:
             matrix_content.append(f"{row_str},\n")
-    
+
     matrix_content.append("])\n")
-    
+
     with open('base_matrix.py', 'w') as f:
         f.writelines(matrix_content)
 
@@ -344,17 +349,26 @@ if __name__ == "__main__":
     matrix = Matrix(m=M, n=N, min=MIN_VAL, max=MAX_VAL, epsilon=EPSILON, base_P=BASE_MATRIX)
 
     need_new_matrix = (
-        matrix.base_P is None or 
+        matrix.base_P is None or
         matrix.base_P.shape != (M, N)
     )
-    
+
     if need_new_matrix:
         print(f"Generating new {M}x{N} matrix...")
-        matrix.generateMatrix()
+        if MATRIX_MODE == "toeplitz":
+            matrix.generateMatrix(
+                mode="toeplitz",
+                rho=TOEPLITZ_RHO,
+                signed=TOEPLITZ_SIGNED,
+                antisymmetric=TOEPLITZ_ANTISYMMETRIC,
+                band=TOEPLITZ_BAND
+            )
+        else:
+            matrix.generateMatrix(mode="uniform")
 
         update_base_matrix(matrix.base_P)
         print("Updated base_matrix.py with new BASE_MATRIX")
-        
+
         import importlib
         import base_matrix
         importlib.reload(base_matrix)
@@ -362,7 +376,7 @@ if __name__ == "__main__":
         print("Reloaded base matrix configuration")
     else:
         print(f"Using existing {M}x{N} matrix from config")
-    
+
     # Create environment with the possibility of using MacroStrategyWrapper
     def make_env():
         base_env = RandomMatrixEnv(matrix)
@@ -373,10 +387,10 @@ if __name__ == "__main__":
         return TimeLimit(base_env, max_episode_steps=2000)
 
     vec_env = make_vec_env(make_env, n_envs=N_ENVS)
-    
+
     # Initialize model in all cases
     model = None
-    
+
     if LOAD_MODEL:
         # Search for existing model
         model_path = None
@@ -384,7 +398,7 @@ if __name__ == "__main__":
             if file.endswith('.zip') and f'matrix{M}x{N}_min{MIN_VAL}_max{MAX_VAL}_epsilon{EPSILON}' in file:
                 model_path = os.path.join('models', file)
                 break
-        
+
         if model_path and os.path.exists(model_path):
             print(f"Loading existing model from: {model_path}")
             model = PPO.load(model_path, env=vec_env, verbose=1)
@@ -404,7 +418,7 @@ if __name__ == "__main__":
 
     # Create callbacks
     callbacks = [EpisodeCounterCallback()]
-    
+
     if USE_BIAS_ANNEALING:
         bias_callback = LogitBiasAnnealCallback(
             preferred_id=PREFERRED_ACTION_ID,
@@ -413,7 +427,7 @@ if __name__ == "__main__":
         )
         callbacks.append(bias_callback)
         print("Using LogitBiasAnnealCallback for bias annealing")
-    
+
     if USE_HISTORY_TRACKING:
         history_callback = HistoryTrackerCallback(
             history_size=HISTORY_SIZE,
@@ -421,8 +435,8 @@ if __name__ == "__main__":
         )
         callbacks.append(history_callback)
         print(f"Using HistoryTrackerCallback (history_size={HISTORY_SIZE}, no_improve_steps={NO_IMPROVE_STEPS})")
-    
-       
+
+
     if callbacks:
         model.learn(total_timesteps=TIMESTEPS, callback=callbacks)
     else:

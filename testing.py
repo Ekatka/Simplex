@@ -162,8 +162,8 @@ def test_rl(matrix: Matrix):
     obs, _ = env.reset()
     done = False
     while not done:
-        action, _ = model.predict(obs)
-        # print(f"[RL] Action: {PIVOT_MAP[int(action)]}")
+        action, _ = model.predict(obs, deterministic=True)
+        print(f"[RL] Action: {PIVOT_MAP[int(action)]}")
         obs, _, done, _, _ = env.step(action)
 
     # Extract strategies
@@ -187,7 +187,7 @@ if __name__ == "__main__":
 
     test_matrix = matrix.generate_perturbed_matrix()
     # print("\nTesting Matrix:")
-    # print(pd.DataFrame(test_matrix.base_P).to_string(index=False, header=False))
+    print(pd.DataFrame(test_matrix.base_P).to_string(index=False, header=False))
 
 
     test_fixed_strategies(test_matrix)
