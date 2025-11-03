@@ -1,10 +1,10 @@
 import numpy as np
 # Training parameters
-M = 6
-N = 6
+M = 25
+N = 25
 
-TIMESTEPS = 20_000
-LOAD_MODEL = True
+TIMESTEPS = 50_000
+LOAD_MODEL = False
 MATRIX_MODE = "uniform" # toeplitz, uniform
 
 # UNIFORM MODE SETTINGS
@@ -19,7 +19,7 @@ TOEPLITZ_ANTISYMMETRIC = False
 TOEPLITZ_BAND = None
 
 # EPSILON used in both
-EPSILON = 0.00
+EPSILON = 0.1
 
 PREFERRED_ACTION_ID = 2
 INITIAL_BIAS = 3.0

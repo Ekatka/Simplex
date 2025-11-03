@@ -2,8 +2,8 @@ import numpy as np
 import pandas as pd
 from stable_baselines3 import PPO
 from matrix import Matrix
-from simplex_solver import change_to_zero_sum_phase2_only, SecondPhasePivotingEnv
-from training_ppo_simplex import RandomMatrixEnv
+from simplex_solver import change_to_zero_sum_phase2_only
+from envs import RandomMatrixEnv
 from collections import deque
 import copy
 
