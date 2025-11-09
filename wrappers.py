@@ -1,6 +1,6 @@
 import gymnasium as gym
 
-
+# Currently not used
 class EarlyStopWrapper(gym.Wrapper):
     def __init__(self, env, max_degenerate_streak=100, window=200, improve_tol=1e-12):
         super().__init__(env)
@@ -37,7 +37,7 @@ class EarlyStopWrapper(gym.Wrapper):
 
         return obs, rew, done, truncated, info
 
-
+# repeat chosen action for macro_len steps
 class MacroStrategyWrapper(gym.Wrapper):
     def __init__(self, env, macro_len: int = 10):
         super().__init__(env)

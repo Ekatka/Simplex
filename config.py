@@ -1,9 +1,9 @@
 import numpy as np
 # Training parameters
-M = 25
-N = 25
+M = 50
+N = 50
 
-TIMESTEPS = 50_000
+TIMESTEPS = 500_000
 LOAD_MODEL = False
 MATRIX_MODE = "uniform" # toeplitz, uniform
 

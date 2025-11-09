@@ -3,7 +3,7 @@ import numpy as np
 from stable_baselines3.common.callbacks import BaseCallback
 import torch as th
 
-
+# print number of episodes finished in each rollout
 class EpisodeCounterCallback(BaseCallback):
     def __init__(self):
         super().__init__()
@@ -22,7 +22,7 @@ class EpisodeCounterCallback(BaseCallback):
     def _on_rollout_end(self) -> None:
         self.logger.record("debug/episodes_finished_in_rollout", self.completed_this_iter)
 
-
+# add bias to choosing actions
 class LogitBiasAnnealCallback(BaseCallback):
     def __init__(self, preferred_id: int, initial_bias: float = 3.0, half_life: int = 500_000, verbose=0):
         super().__init__(verbose)
@@ -39,7 +39,7 @@ class LogitBiasAnnealCallback(BaseCallback):
             bias[self.preferred_id] = self.initial_bias * factor
         return True
 
-
+# was used to track history of actions and rewards
 class HistoryTrackerCallback(BaseCallback):
     def __init__(self, history_size: int = 20, no_improve_steps: int = 100, improve_tol: float = 1e-12):
         super().__init__()
