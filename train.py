@@ -11,9 +11,10 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.env_util import make_vec_env
 
 from envs import RandomMatrixEnv
-from matrix import Matrix
+from matrix import Matrix, SingleCoordinateNoiseMatrix
 from config import MATRIX_MODE, TOEPLITZ_RHO, TOEPLITZ_SIGNED, TOEPLITZ_ANTISYMMETRIC, TOEPLITZ_BAND
 from config import M, N, MIN_VAL, MAX_VAL, EPSILON, TIMESTEPS, N_ENVS, MODEL_NAME_TEMPLATE, LOAD_MODEL, PREFERRED_ACTION_ID, INITIAL_BIAS, USE_MACRO_STRATEGY, USE_BIAS_ANNEALING, USE_INITIAL_ACTION_BIAS, USE_HISTORY_TRACKING, HISTORY_SIZE, NO_IMPROVE_STEPS
+from config import USE_SINGLE_COORDINATE_NOISE, SINGLE_COORDINATE_NOISE_FLAG
 from base_matrix import BASE_MATRIX
 
 from wrappers import MacroStrategyWrapper
@@ -29,7 +30,21 @@ def apply_initial_action_bias(model, preferred_id: int, initial_bias: float = 3.
         bias[int(preferred_id)] = float(initial_bias)
 
 
-def create_ppo_model(vec_env, verbose=1, n_envs=1, learning_rate=3e-5, n_steps=1024, clip_range=0.2):
+def create_matrix():
+    """Create a matrix instance based on config settings"""
+    if USE_SINGLE_COORDINATE_NOISE:
+        matrix = SingleCoordinateNoiseMatrix(
+            m=M, n=N, min=MIN_VAL, max=MAX_VAL, epsilon=EPSILON, base_P=BASE_MATRIX,
+            single_coordinate_noise=SINGLE_COORDINATE_NOISE_FLAG
+        )
+        print(f"Using SingleCoordinateNoiseMatrix (single_coordinate_noise={SINGLE_COORDINATE_NOISE_FLAG})")
+    else:
+        matrix = Matrix(m=M, n=N, min=MIN_VAL, max=MAX_VAL, epsilon=EPSILON, base_P=BASE_MATRIX)
+        print("Using standard Matrix")
+    return matrix
+
+
+def create_ppo_model(vec_env, verbose=1, n_envs=1, learning_rate=1e-4, n_steps=512, clip_range=0.1):
     policy_kwargs = dict(
         net_arch=dict(pi=[128, 128], vf=[128, 128])
     )
@@ -137,7 +152,7 @@ def grid_search():
 
     # Initialize matrix (same logic as in main)
     print(f"Matrix dimensions: {M}x{N}")
-    matrix = Matrix(m=M, n=N, min=MIN_VAL, max=MAX_VAL, epsilon=EPSILON, base_P=BASE_MATRIX)
+    matrix = create_matrix()
 
     need_new_matrix = (
         matrix.base_P is None or
@@ -230,7 +245,7 @@ def grid_search():
 
 def main():
     print(f"Matrix dimensions: {M}x{N}")
-    matrix = Matrix(m=M, n=N, min=MIN_VAL, max=MAX_VAL, epsilon=EPSILON, base_P=BASE_MATRIX)
+    matrix = create_matrix()
 
     need_new_matrix = (
         matrix.base_P is None or

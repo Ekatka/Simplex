@@ -50,9 +50,9 @@ class SecondPhasePivotingEnv(gym.Env):
 
         # === Reward coefficients ===
         self._step_penalty = 1.0
-        self._improve_coef = 10.0
-        self._degenerate_penalty = 0.2
-        self._loop_penalty = 5.0
+        self._improve_coef = 0.0
+        self._degenerate_penalty = 0.0
+        self._loop_penalty = 0.0
         self._success_bonus = 50.0
         self._improve_tol = 1e-12
 
@@ -69,10 +69,6 @@ class SecondPhasePivotingEnv(gym.Env):
             "objective": spaces.Box(low=-np.inf, high=np.inf, shape=(1,), dtype=np.float64),
             "delta_objective": spaces.Box(low=-np.inf, high=np.inf, shape=(1,), dtype=np.float64),
             "nit_norm": spaces.Box(low=0.0, high=1.0, shape=(1,), dtype=np.float32),
-            "degenerate_streak": spaces.Box(low=0.0, high=np.inf, shape=(1,), dtype=np.float32),
-            "loop_flag": spaces.Box(low=0.0, high=1.0, shape=(1,), dtype=np.float32),
-            "last_action_onehot": spaces.Box(low=0.0, high=1.0, shape=(int(NUM_PIVOT_STRATEGIES),), dtype=np.float32),
-            "shift_K": spaces.Box(low=0.0, high=np.inf, shape=(1,), dtype=np.float64),
         })
 
         self.complete = False
@@ -110,10 +106,10 @@ class SecondPhasePivotingEnv(gym.Env):
             "objective": np.array([obj], dtype=np.float64),
             "delta_objective": np.array([delta], dtype=np.float64),
             "nit_norm": self._nit_norm(),
-            "degenerate_streak": np.array([float(self._degenerate_streak)], dtype=np.float32),
-            "loop_flag": np.array([1.0 if self._basis_key() in self._seen_bases else 0.0], dtype=np.float32),
-            "last_action_onehot": self._last_action_onehot(),
-            "shift_K": np.array([float(getattr(self, "K", 0.0) or 0.0)], dtype=np.float64),
+            # "degenerate_streak": np.array([float(self._degenerate_streak)], dtype=np.float32),
+            # "loop_flag": np.array([1.0 if self._basis_key() in self._seen_bases else 0.0], dtype=np.float32),
+            # "last_action_onehot": self._last_action_onehot(),
+            # "shift_K": np.array([float(getattr(self, "K", 0.0) or 0.0)], dtype=np.float64),
         }
         return obs
 
@@ -302,7 +298,6 @@ class RandomMatrixEnv(SecondPhasePivotingEnv):
 
     def step(self, action):
         obs, reward, done, truncated, info = super().step(action)
-        self.nit += 1
         return obs, reward, done, truncated, info
 
 

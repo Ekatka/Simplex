@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 from stable_baselines3 import PPO
 from matrix import Matrix
-from simplex_solver import change_to_zero_sum_phase2_only
+from simplex_solver import change_to_zero_sum_phase2_only, _pivot_col_heuristics, _pivot_row, _apply_pivot
 from envs import RandomMatrixEnv
 from collections import deque
 import copy
@@ -10,9 +10,85 @@ import copy
 # Import constants
 from config import (
     M, N, MIN_VAL, MAX_VAL, EPSILON, TIMESTEPS,
-    MODEL_NAME_TEMPLATE, BFS_DEPTH, PIVOT_MAP, NUM_PIVOT_STRATEGIES
+    MODEL_NAME_TEMPLATE, BFS_DEPTH, PIVOT_MAP, PIVOT_MAP_TEST, NUM_PIVOT_STRATEGIES, NUM_PIVOT_STRATEGIES_TEST
 )
 from base_matrix import BASE_MATRIX
+
+
+class TestRandomMatrixEnv(RandomMatrixEnv):
+    """Test environment that uses PIVOT_MAP_TEST instead of PIVOT_MAP"""
+    def step(self, action):
+        self._last_action = int(action)
+        # Use PIVOT_MAP_TEST for testing all heuristics
+        strategy = PIVOT_MAP_TEST[self._last_action]
+
+        reward = -self._step_penalty
+        done = False
+        truncated = False
+
+        pivcol_found, pivcol = _pivot_col_heuristics(self.T, strategy=strategy, tol=self.tol)
+        if not pivcol_found:
+            reward += self._success_bonus
+            done = True
+            info = {
+                "status": "optimal",
+                "nit": self.nit,
+                "objective": float(self.T[-1, -1]),
+                "degenerate_streak": self._degenerate_streak,
+            }
+            return self._get_obs(), reward, done, truncated, info
+
+        use_bland = (strategy == 'blands_rule')
+        pivrow_found, pivrow = _pivot_row(self.T, self.basis, pivcol, phase=2, tol=self.tol, bland=use_bland)
+        if not pivrow_found:
+            done = True
+            info = {
+                "status": "no_pivot_row",
+                "nit": self.nit,
+                "objective": float(self.T[-1, -1]),
+                "degenerate_streak": self._degenerate_streak,
+            }
+            return self._get_obs(), reward, done, truncated, info
+
+        old_obj = float(self.T[-1, -1])
+        _apply_pivot(self.T, self.basis, pivrow, pivcol, tol=self.tol)
+        self.nit += 1
+        new_obj = float(self.T[-1, -1])
+
+        delta = old_obj - new_obj
+        if delta > self._improve_tol:
+            reward += self._improve_coef * delta
+            self._degenerate_streak = 0
+        else:
+            reward -= self._degenerate_penalty
+            self._degenerate_streak += 1
+
+        key = self._basis_key()
+        if key in self._seen_bases:
+            print("LOOP DETECTED")
+            reward -= self._loop_penalty
+            truncated = True
+        else:
+            self._seen_bases.add(key)
+
+        if self.nit >= self.maxiter:
+            done = True
+
+        self._last_obj = new_obj
+
+        info = {
+            "status": "running",
+            "nit": self.nit,
+            "objective": new_obj,
+            "delta_objective": delta,
+            "degenerate": (delta <= self._improve_tol),
+            "degenerate_streak": self._degenerate_streak,
+            "pivcol": int(pivcol),
+            "pivrow": int(pivrow),
+            "strategy": strategy,
+            "loop_detected": truncated,
+        }
+        return self._get_obs(), reward, done, truncated, info
 def bfs_search(env_start):
     queue = deque()
     queue.append((env_start, []))
@@ -20,7 +96,7 @@ def bfs_search(env_start):
         env, path = queue.popleft()
         if len(path) >= BFS_DEPTH:
             continue
-        for action in range(NUM_PIVOT_STRATEGIES):  # Use constant from config
+        for action in range(NUM_PIVOT_STRATEGIES_TEST):  # Use TEST constant to test all heuristics
             env_copy = copy.deepcopy(env)
             _, _, done, _, _ = env_copy.step(action)
             new_path = path + [action]
@@ -30,12 +106,12 @@ def bfs_search(env_start):
     return None
 
 def find_optimal_pivot_sequence_bfs(matrix: Matrix):
-    env = RandomMatrixEnv(matrix)
+    env = TestRandomMatrixEnv(matrix)
     _, _ = env.reset()
     path = bfs_search(env)
 
     if path:
-        final_env = RandomMatrixEnv(matrix.copy())
+        final_env = TestRandomMatrixEnv(matrix.copy())
         _, _ = final_env.reset()
         for a in path:
             _, _, _, _, _ = final_env.step(a)
@@ -47,7 +123,7 @@ def find_optimal_pivot_sequence_bfs(matrix: Matrix):
         # Compute game value using the correct formula from game theory
         game_value = compute_game_value_from_strategies(matrix, first_player_strategy, second_player_strategy)
         
-        readable = [PIVOT_MAP[a] for a in path]
+        readable = [PIVOT_MAP_TEST[a] for a in path]
         print(f"\n[BFS] Shortest path: {' → '.join(readable)} ({len(path)} steps)")
         print(f"[BFS] Game Value: {game_value:.6f}")
         print(f"[BFS] First Player Strategy: {first_player_strategy}")
@@ -58,24 +134,25 @@ def find_optimal_pivot_sequence_bfs(matrix: Matrix):
     return None, None, None
 
 def run_fixed_strategy(matrix: Matrix, action: int):
-    env = RandomMatrixEnv(matrix)
+    env = TestRandomMatrixEnv(matrix)
     _, _ = env.reset()
     done = False
-    while not done:
-        _, _, done, _, _ = env.step(action)
-    method = PIVOT_MAP[action]
+    truncated = False
+    while not done and not truncated:
+        _, _, done, truncated, _ = env.step(action)
+    method = PIVOT_MAP_TEST[action]
     
     # Extract strategies
     first_player_strategy = extract_optimal_strategy(env.T, env.basis, M)
     second_player_strategy = extract_second_player_strategy(env.T, env.basis, M, N)
     
-    # Compute game value using the correct formula from game theory
+
     game_value = compute_game_value_from_strategies(matrix, first_player_strategy, second_player_strategy)
     
     print(f"[{method.title()} Pivot] Steps: {env.nit}, Game Value: {game_value:.6f}")
 
 def test_fixed_strategies(matrix: Matrix):
-    for action in range(NUM_PIVOT_STRATEGIES):  # Use constant from config
+    for action in range(NUM_PIVOT_STRATEGIES_TEST):  # Use constant from config
         run_fixed_strategy(matrix, action)
 
 def extract_optimal_strategy(T, basis, m):
@@ -161,10 +238,13 @@ def test_rl(matrix: Matrix):
     model = PPO.load(model_path)
     obs, _ = env.reset()
     done = False
-    while not done:
+    truncated = False
+    i = 0
+    while not done and not truncated:
+
         action, _ = model.predict(obs, deterministic=True)
-        print(f"[RL] Action: {PIVOT_MAP[int(action)]}")
-        obs, _, done, _, _ = env.step(action)
+        # print(f"[RL] Action: {PIVOT_MAP[int(action)]}")
+        obs, _, done, truncated, _ = env.step(action)
 
     # Extract strategies
     first_player_strategy = extract_optimal_strategy(env.T, env.basis, M)
@@ -177,13 +257,13 @@ def test_rl(matrix: Matrix):
     # print("[RL] First Player Strategy:", first_player_strategy)
     # print("[RL] Second Player Strategy:", second_player_strategy)
     print(f"[RL] Steps Taken: {env.nit}")
-    
+
 
 if __name__ == "__main__":
     print(M,N)
     matrix = Matrix(m=M, n=N, min=MIN_VAL, max=MAX_VAL, epsilon=EPSILON, base_P=BASE_MATRIX)
     # print("Base matrix:")
-    # print(pd.DataFrame(matrix.base_P).to_string(index=False, header=False))
+    print(pd.DataFrame(matrix.base_P).to_string(index=False, header=False))
 
     test_matrix = matrix.generate_perturbed_matrix()
     # print("\nTesting Matrix:")

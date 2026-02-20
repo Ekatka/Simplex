@@ -173,3 +173,39 @@ class Matrix:
             A = mag
 
         return A
+
+
+class SingleCoordinateNoiseMatrix(Matrix):
+    """
+    Matrix variant where perturbation affects exactly one coordinate.
+    If single_coordinate_noise=False, uses the base Matrix behavior.
+    When single_coordinate_noise=True, a single random coordinate (i, j) is selected
+    and epsilon noise is added or subtracted from that coordinate only.
+    """
+
+    def __init__(self, *args, single_coordinate_noise=True, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.single_coordinate_noise = bool(single_coordinate_noise)
+
+    def generate_perturbed_matrix(self):
+        if not self.single_coordinate_noise:
+            return super().generate_perturbed_matrix()
+
+        if self.base_P is None:
+            raise RuntimeError("Base matrix is None. Call generateMatrix(...) first.")
+
+        perturbed = self.base_P.astype(np.float64, copy=True)
+        row = np.random.randint(0, self.m)
+        col = np.random.randint(0, self.n)
+        delta = self.epsilon if np.random.rand() >= 0.5 else -self.epsilon
+        perturbed[row, col] += delta
+
+        return SingleCoordinateNoiseMatrix(
+            self.m,
+            self.n,
+            self.min,
+            self.max,
+            epsilon=0.0,
+            base_P=perturbed,
+            single_coordinate_noise=self.single_coordinate_noise,
+        )

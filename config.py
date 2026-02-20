@@ -1,15 +1,15 @@
 import numpy as np
 # Training parameters
-M = 50
-N = 50
+M = 40
+N = 40
 
-TIMESTEPS = 500_000
+TIMESTEPS = 1_000_000
 LOAD_MODEL = False
 MATRIX_MODE = "uniform" # toeplitz, uniform
 
 # UNIFORM MODE SETTINGS
-MIN_VAL = -10
-MAX_VAL = 10
+MIN_VAL = -1
+MAX_VAL = 1
 
 
 # TOEPLITZ Matrices
@@ -19,7 +19,7 @@ TOEPLITZ_ANTISYMMETRIC = False
 TOEPLITZ_BAND = None
 
 # EPSILON used in both
-EPSILON = 0.1
+EPSILON = 0.01
 
 PREFERRED_ACTION_ID = 2
 INITIAL_BIAS = 3.0
@@ -37,11 +37,21 @@ PIVOT_MAP = {
     0: 'largest_coefficient',
     1: 'largest_increase',
     2: 'steepest_edge',
+    # 3: 'random_edge'
     # 3: 'blands_rule'
 }
 
+PIVOT_MAP_TEST = {
+    0: 'largest_coefficient',
+    1: 'largest_increase',
+    2: 'steepest_edge',
+    3: 'random_edge',
+    4: 'blands_rule'
+}
+
 NUM_PIVOT_STRATEGIES = len(PIVOT_MAP)
-PIVOT_STRATEGY_NAMES = list(PIVOT_MAP.values())
+NUM_PIVOT_STRATEGIES_TEST = len(PIVOT_MAP_TEST)
+PIVOT_STRATEGY_NAMES = list(PIVOT_MAP_TEST.values())
 
 # Advanced training features
 USE_MACRO_STRATEGY = False  # Set to True to use MacroStrategyWrapper
@@ -52,4 +62,8 @@ USE_INITIAL_ACTION_BIAS = False
 USE_HISTORY_TRACKING = False  # Enable history tracking and printing when objective doesn't improve
 HISTORY_SIZE = 20  # Number of last steps to keep in history
 NO_IMPROVE_STEPS = 100  # Number of steps without improvement before printing history
+
+# Single coordinate noise matrix feature
+USE_SINGLE_COORDINATE_NOISE = False  # Set to True to use SingleCoordinateNoiseMatrix instead of Matrix
+SINGLE_COORDINATE_NOISE_FLAG = False  # When USE_SINGLE_COORDINATE_NOISE=True, this controls the single_coordinate_noise flag
 

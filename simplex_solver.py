@@ -35,6 +35,31 @@ def potential_increase(T, col_index, cost_j, tol=1e-9):
     else:
         return None
 
+def pivot_col_random_positive_increase(T, ma, tol=1e-9):
+    """
+    Randomly choose a pivot column among those that yield
+    a strictly positive objective increase.
+    """
+
+    rng = np.random
+
+    cost_row = T[-1, :-1]
+    col_candidates = np.ma.nonzero(ma < 0)[0]
+
+    positive_cols = []
+
+    for j in col_candidates:
+        cost_j = cost_row[j]
+        inc = potential_increase(T, j, cost_j, tol=tol)
+        if inc is not None and inc > tol:
+            positive_cols.append(j)
+
+    if not positive_cols:
+        return False, np.nan
+
+    return True, rng.choice(positive_cols)
+
+
 def pivot_col_largest_increase(T, ma, tol=1e-9):
     cost_row = T[-1, :-1]  # objective coefficients excluding the RHS
 
@@ -76,6 +101,9 @@ def _pivot_col_heuristics(T, strategy, tol=1e-9):
     elif strategy == 'largest_increase':
         res, col = pivot_col_largest_increase(T, ma, tol)
         return res, col
+
+    elif strategy == 'random_edge':
+        return pivot_col_random_positive_increase(T, ma, tol)
 
     elif strategy == 'steepest_edge':
         cost_row = T[-1, :-1]
