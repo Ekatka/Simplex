@@ -294,7 +294,7 @@ def phase1solver(T, basis,
     nit = nit0
     status = 0
     phase=1
-    bland=True
+    bland=False
     message = ''
     complete = False
     m = T.shape[1] - 2
@@ -306,7 +306,7 @@ def phase1solver(T, basis,
 
     while not complete:
         # Find the pivot column
-        pivcol_found, pivcol = _pivot_col(T, tol, bland=True)
+        pivcol_found, pivcol = _pivot_col_heuristics(T, strategy='steepest_edge', tol=tol)
         if not pivcol_found:
             pivcol = np.nan
             pivrow = np.nan

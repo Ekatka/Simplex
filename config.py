@@ -3,7 +3,7 @@ import numpy as np
 M = 40
 N = 40
 
-TIMESTEPS = 1_000_000
+TIMESTEPS = 2_000_000
 LOAD_MODEL = False
 MATRIX_MODE = "uniform" # toeplitz, uniform
 
@@ -19,7 +19,7 @@ TOEPLITZ_ANTISYMMETRIC = False
 TOEPLITZ_BAND = None
 
 # EPSILON used in both
-EPSILON = 0.01
+EPSILON = 0.001
 
 PREFERRED_ACTION_ID = 2
 INITIAL_BIAS = 3.0
@@ -66,4 +66,10 @@ NO_IMPROVE_STEPS = 100  # Number of steps without improvement before printing hi
 # Single coordinate noise matrix feature
 USE_SINGLE_COORDINATE_NOISE = False  # Set to True to use SingleCoordinateNoiseMatrix instead of Matrix
 SINGLE_COORDINATE_NOISE_FLAG = False  # When USE_SINGLE_COORDINATE_NOISE=True, this controls the single_coordinate_noise flag
+
+# Two-phase simplex: when True, build Phase 1 tableau and solve it (Bland's rule),
+# then transition to Phase 2 for the RL agent. When False, construct
+# the Phase 2 tableau directly (skipping Phase 1).
+# NOTE: the two modes produce different tableau shapes, so models are NOT interchangeable.
+USE_TWO_PHASE = True
 

@@ -14,7 +14,7 @@ from envs import RandomMatrixEnv
 from matrix import Matrix, SingleCoordinateNoiseMatrix
 from config import MATRIX_MODE, TOEPLITZ_RHO, TOEPLITZ_SIGNED, TOEPLITZ_ANTISYMMETRIC, TOEPLITZ_BAND
 from config import M, N, MIN_VAL, MAX_VAL, EPSILON, TIMESTEPS, N_ENVS, MODEL_NAME_TEMPLATE, LOAD_MODEL, PREFERRED_ACTION_ID, INITIAL_BIAS, USE_MACRO_STRATEGY, USE_BIAS_ANNEALING, USE_INITIAL_ACTION_BIAS, USE_HISTORY_TRACKING, HISTORY_SIZE, NO_IMPROVE_STEPS
-from config import USE_SINGLE_COORDINATE_NOISE, SINGLE_COORDINATE_NOISE_FLAG
+from config import USE_SINGLE_COORDINATE_NOISE, SINGLE_COORDINATE_NOISE_FLAG, USE_TWO_PHASE
 from base_matrix import BASE_MATRIX
 
 from wrappers import MacroStrategyWrapper
@@ -46,7 +46,7 @@ def create_matrix():
 
 def create_ppo_model(vec_env, verbose=1, n_envs=1, learning_rate=1e-4, n_steps=512, clip_range=0.1):
     policy_kwargs = dict(
-        net_arch=dict(pi=[128, 128], vf=[128, 128])
+        net_arch=dict(pi=[256, 256], vf=[256, 256])
     )
     return PPO(
         "MultiInputPolicy",

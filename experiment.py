@@ -9,13 +9,14 @@ from scipy.stats import wilcoxon
 from matrix import Matrix
 from simplex_solver import (
     change_to_zero_sum_phase2_only,
+    change_to_zero_sum, phase1solver, first_to_second,
     _pivot_col_heuristics, _pivot_row, _apply_pivot,
 )
 from envs import SecondPhasePivotingEnv
 from config import (
     M, N, MIN_VAL, MAX_VAL, EPSILON, TIMESTEPS,
     MODEL_NAME_TEMPLATE, PIVOT_MAP, PIVOT_MAP_TEST,
-    PIVOT_STRATEGY_NAMES,
+    PIVOT_STRATEGY_NAMES, USE_TWO_PHASE,
 )
 from base_matrix import BASE_MATRIX
 
@@ -32,10 +33,20 @@ def prepare_tableau(matrix_P):
 
     Returns (T, basis) ready for pivoting, or None on failure.
     """
-    res = change_to_zero_sum_phase2_only(matrix_P)
-    if res is None:
-        return None
-    T, basis, K = res
+    if USE_TWO_PHASE:
+        T, basis, av = change_to_zero_sum(matrix_P)
+        nit, status = phase1solver(T, basis)
+        if status != 0:
+            return None
+        res = first_to_second(T, basis, av)
+        if res is None:
+            return None
+        T, basis = res
+    else:
+        res = change_to_zero_sum_phase2_only(matrix_P)
+        if res is None:
+            return None
+        T, basis, K = res
     # Remove artificial variables from basis (mirrors SecondPhasePivotingEnv.remove_artificial)
     for pivrow in [row for row in range(basis.size) if basis[row] > T.shape[1] - 2]:
         non_zero_cols = [col for col in range(T.shape[1] - 1) if abs(T[pivrow, col]) > TOL]
@@ -129,7 +140,7 @@ def generate_test_matrices(n_matrices, mode="in_distribution"):
 
 
 # ---------------------------------------------------------------------------
-# Main experiment loop
+# Main experiment loop-
 # ---------------------------------------------------------------------------
 
 def run_experiment(n_matrices, seed):
@@ -265,8 +276,63 @@ def analyze_results(results, all_methods):
                     direction = "RL better" if median_diff < 0 else "Heuristic better"
                     print(f"      Wilcoxon p={p:.6f} ({direction})")
 
-        # --- RL vs best-per-instance heuristic ---
-        print(f"\n  RL Agent vs best heuristic per instance:")
+        # --- Speedup: RL vs each heuristic ---
+        print(f"\n  Iteration reduction: RL Agent vs each heuristic "
+              f"(paired instances where both converged)")
+        print(f"    {'Heuristic':25s} {'Mean %':>8s} {'Median %':>9s} "
+              f"{'Mean iters':>11s} {'P25 %':>7s} {'P75 %':>7s} {'N':>5s}")
+
+        for strategy in strategies:
+            pct_reductions = []
+            abs_reductions = []
+            for row in rows:
+                rl_ok = row["rl_agent"]["status"] == "optimal"
+                h_ok = row[strategy]["status"] == "optimal"
+                if rl_ok and h_ok:
+                    rl_n = row["rl_agent"]["nit"]
+                    h_n = row[strategy]["nit"]
+                    if h_n > 0:
+                        pct_reductions.append((h_n - rl_n) / h_n * 100)
+                    abs_reductions.append(h_n - rl_n)
+
+            if pct_reductions:
+                arr = np.array(pct_reductions)
+                abs_arr = np.array(abs_reductions)
+                print(f"    {strategy:25s} {arr.mean():+7.1f}% {np.median(arr):+8.1f}% "
+                      f"{abs_arr.mean():+10.1f} {np.percentile(arr, 25):+6.1f}% "
+                      f"{np.percentile(arr, 75):+6.1f}% {len(arr):5d}")
+            else:
+                print(f"    {strategy:25s}  {'(no paired data)':>40s}")
+
+        # --- Speedup: RL vs best-per-instance heuristic ---
+        print(f"\n  Iteration reduction: RL Agent vs best heuristic per instance")
+
+        pct_vs_best = []
+        abs_vs_best = []
+        for row in rows:
+            rl_ok = row["rl_agent"]["status"] == "optimal"
+            best_nit = None
+            for strategy in strategies:
+                if row[strategy]["status"] == "optimal":
+                    if best_nit is None or row[strategy]["nit"] < best_nit:
+                        best_nit = row[strategy]["nit"]
+            if rl_ok and best_nit is not None and best_nit > 0:
+                rl_n = row["rl_agent"]["nit"]
+                pct_vs_best.append((best_nit - rl_n) / best_nit * 100)
+                abs_vs_best.append(best_nit - rl_n)
+
+        if pct_vs_best:
+            arr = np.array(pct_vs_best)
+            abs_arr = np.array(abs_vs_best)
+            print(f"    Mean reduction:   {arr.mean():+.1f}%  ({abs_arr.mean():+.1f} iterations)")
+            print(f"    Median reduction: {np.median(arr):+.1f}%  ({np.median(abs_arr):+.1f} iterations)")
+            print(f"    P25 / P75:        {np.percentile(arr, 25):+.1f}% / {np.percentile(arr, 75):+.1f}%")
+            print(f"    Paired instances: {len(arr)}")
+        else:
+            print(f"    (no paired data)")
+
+        # --- RL vs best-per-instance heuristic (win/tie/loss) ---
+        print(f"\n  Win/Tie/Loss: RL Agent vs best heuristic per instance:")
         wins, ties, losses, na = 0, 0, 0, 0
 
         for row in rows:
@@ -322,7 +388,7 @@ def analyze_results(results, all_methods):
 def main():
     parser = argparse.ArgumentParser(
         description="Experiment: RL agent vs fixed pivot heuristics")
-    parser.add_argument("--n-matrices", type=int, default=500,
+    parser.add_argument("--n-matrices", type=int, default=200,
                         help="Number of test matrices per test set (default: 200)")
     parser.add_argument("--seed", type=int, default=42,
                         help="Random seed for reproducibility (default: 42)")

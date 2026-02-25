@@ -2,9 +2,10 @@ import numpy as np
 import gymnasium as gym
 from gymnasium import spaces
 
-from config import PIVOT_MAP, NUM_PIVOT_STRATEGIES
+from config import PIVOT_MAP, NUM_PIVOT_STRATEGIES, USE_TWO_PHASE
 from simplex_solver import (
     change_to_zero_sum_phase2_only,
+    change_to_zero_sum, phase1solver, first_to_second,
     _pivot_col_heuristics, _pivot_row, _apply_pivot,
 )
 from matrix import Matrix
@@ -267,6 +268,7 @@ class RandomMatrixEnv(SecondPhasePivotingEnv):
         self.epsilon = matrix.epsilon
         self.K = None
         self.nit = 0
+        self._phase1_nit = 0
 
         self._init_env()
 
@@ -274,16 +276,31 @@ class RandomMatrixEnv(SecondPhasePivotingEnv):
 
     def _init_env(self, seed=None):
         self.nit = 0
+        self._phase1_nit = 0
         max_attempts = 20
         for attempt in range(max_attempts):
             try:
                 perturbed_P = self.matrix.generate_perturbed_matrix()
                 npMatrix = perturbed_P.base_P
 
-                res = change_to_zero_sum_phase2_only(npMatrix)
-                if res is not None:
-                    self.T, self.basis, self.K = res
-                    return
+                if USE_TWO_PHASE:
+                    T, basis, av = change_to_zero_sum(npMatrix)
+                    nit, status = phase1solver(T, basis)
+                    if status != 0:
+                        raise RuntimeError(f"Phase 1 failed with status {status}")
+                    self._phase1_nit = nit
+                    res = first_to_second(T, basis, av)
+                    if res is None:
+                        raise RuntimeError("Phase 1→2 transition failed")
+                    self.T, self.basis = res
+                    self.K = None
+                else:
+                    res = change_to_zero_sum_phase2_only(npMatrix)
+                    if res is not None:
+                        self.T, self.basis, self.K = res
+                    else:
+                        raise RuntimeError("Direct Phase 2 construction failed")
+                return
             except Exception as e:
                 print(f"[RandomMatrixEnv] Attempt {attempt + 1} failed: {e}")
                 continue
@@ -298,6 +315,8 @@ class RandomMatrixEnv(SecondPhasePivotingEnv):
 
     def step(self, action):
         obs, reward, done, truncated, info = super().step(action)
+        info["phase1_nit"] = self._phase1_nit
+        info["total_nit"] = self._phase1_nit + self.nit
         return obs, reward, done, truncated, info
 
 
