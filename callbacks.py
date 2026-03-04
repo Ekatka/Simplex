@@ -1,7 +1,34 @@
+import os
 import math
 import numpy as np
 from stable_baselines3.common.callbacks import BaseCallback
 import torch as th
+
+
+class CheckpointAfterCallback(BaseCallback):
+    """Save model every `freq` steps once `start` timesteps have been reached."""
+
+    def __init__(self, save_path_template: str, start: int, freq: int, verbose=1):
+        super().__init__(verbose)
+        self.save_path_template = save_path_template
+        self.start = int(start)
+        self.freq = int(freq)
+        self._last_saved_at = 0
+
+    def _on_step(self) -> bool:
+        t = self.num_timesteps
+        if t < self.start:
+            return True
+        # Determine which checkpoint boundary we just crossed
+        checkpoint = (t // self.freq) * self.freq
+        if checkpoint > self._last_saved_at and checkpoint >= self.start:
+            self._last_saved_at = checkpoint
+            path = self.save_path_template.format(steps=checkpoint)
+            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+            self.model.save(path)
+            if self.verbose:
+                print(f"[Checkpoint] Saved model at {t} timesteps -> {path}")
+        return True
 
 # print number of episodes finished in each rollout
 class EpisodeCounterCallback(BaseCallback):

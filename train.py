@@ -13,12 +13,12 @@ from stable_baselines3.common.env_util import make_vec_env
 from envs import RandomMatrixEnv
 from matrix import Matrix, SingleCoordinateNoiseMatrix
 from config import MATRIX_MODE, TOEPLITZ_RHO, TOEPLITZ_SIGNED, TOEPLITZ_ANTISYMMETRIC, TOEPLITZ_BAND
-from config import M, N, MIN_VAL, MAX_VAL, EPSILON, TIMESTEPS, N_ENVS, MODEL_NAME_TEMPLATE, LOAD_MODEL, PREFERRED_ACTION_ID, INITIAL_BIAS, USE_MACRO_STRATEGY, USE_BIAS_ANNEALING, USE_INITIAL_ACTION_BIAS, USE_HISTORY_TRACKING, HISTORY_SIZE, NO_IMPROVE_STEPS
+from config import M, N, MIN_VAL, MAX_VAL, EPSILON, TIMESTEPS, N_ENVS, MODEL_NAME_TEMPLATE, LOAD_MODEL, PREFERRED_ACTION_ID, INITIAL_BIAS, USE_MACRO_STRATEGY, USE_BIAS_ANNEALING, USE_INITIAL_ACTION_BIAS, USE_HISTORY_TRACKING, HISTORY_SIZE, NO_IMPROVE_STEPS, CHECKPOINT_START, CHECKPOINT_FREQ
 from config import USE_SINGLE_COORDINATE_NOISE, SINGLE_COORDINATE_NOISE_FLAG, USE_TWO_PHASE
 from base_matrix import BASE_MATRIX
 
 from wrappers import MacroStrategyWrapper
-from callbacks import EpisodeCounterCallback, LogitBiasAnnealCallback, HistoryTrackerCallback
+from callbacks import EpisodeCounterCallback, LogitBiasAnnealCallback, HistoryTrackerCallback, CheckpointAfterCallback
 from io_utils import update_base_matrix
 
 
@@ -106,12 +106,20 @@ def train_single_config(matrix, learning_rate, n_steps, clip_range, run_id, tota
         )
         callbacks.append(history_callback)
 
+    # Checkpoint callback for grid search runs too
+    lr_str = f"{learning_rate:.2e}".replace(".", "p").replace("-", "m").replace("+", "p")
+    grid_ckpt_template = f"models/ppo_grid_ckpt_lr{lr_str}_nsteps{n_steps}_clip{clip_range}" + "_{steps}" + f"_matrix{M}x{N}.zip"
+    checkpoint_cb = CheckpointAfterCallback(
+        save_path_template=grid_ckpt_template,
+        start=CHECKPOINT_START,
+        freq=CHECKPOINT_FREQ,
+    )
+    callbacks.append(checkpoint_cb)
+
     # Train the model
     model.learn(total_timesteps=TIMESTEPS, callback=callbacks)
 
     # Save the model with a unique name
-    # Format learning_rate for filename (replace dots and signs with underscores)
-    lr_str = f"{learning_rate:.2e}".replace(".", "p").replace("-", "m").replace("+", "p")
     filename = f"models/ppo_grid_lr{lr_str}_nsteps{n_steps}_clip{clip_range}_matrix{M}x{N}_min{MIN_VAL}_max{MAX_VAL}_epsilon{EPSILON}.zip"
     model.save(filename)
 
@@ -332,10 +340,17 @@ def main():
         callbacks.append(history_callback)
         print(f"Using HistoryTrackerCallback (history_size={HISTORY_SIZE}, no_improve_steps={NO_IMPROVE_STEPS})")
 
-    if callbacks:
-        model.learn(total_timesteps=TIMESTEPS, callback=callbacks)
-    else:
-        model.learn(total_timesteps=TIMESTEPS)
+    # Checkpoint callback: save every CHECKPOINT_FREQ steps after CHECKPOINT_START
+    checkpoint_template = "models/ppo_checkpoint_{steps}_matrix" + f"{M}x{N}_min{MIN_VAL}_max{MAX_VAL}_epsilon{EPSILON}.zip"
+    checkpoint_cb = CheckpointAfterCallback(
+        save_path_template=checkpoint_template,
+        start=CHECKPOINT_START,
+        freq=CHECKPOINT_FREQ,
+    )
+    callbacks.append(checkpoint_cb)
+    print(f"Checkpointing enabled: every {CHECKPOINT_FREQ:,} steps after {CHECKPOINT_START:,}")
+
+    model.learn(total_timesteps=TIMESTEPS, callback=callbacks)
 
     filename = MODEL_NAME_TEMPLATE.format(
         steps=TIMESTEPS, m=M, n=N, min=MIN_VAL, max=MAX_VAL, eps=EPSILON

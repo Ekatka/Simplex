@@ -3,7 +3,11 @@ import numpy as np
 M = 40
 N = 40
 
-TIMESTEPS = 2_000_000
+TIMESTEPS = 12_000_000
+
+# Checkpoint settings: save model every CHECKPOINT_FREQ steps after CHECKPOINT_START
+CHECKPOINT_START = 5_000_000
+CHECKPOINT_FREQ = 1_000_000
 LOAD_MODEL = False
 MATRIX_MODE = "uniform" # toeplitz, uniform
 
