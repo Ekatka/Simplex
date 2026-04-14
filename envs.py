@@ -8,6 +8,7 @@ from simplex_solver import (
     change_to_zero_sum, phase1solver, first_to_second,
     _pivot_col_heuristics, _pivot_row, _apply_pivot,
 )
+from _linprog_utils import _parse_linprog, _get_Abc, _LPProblem
 from matrix import Matrix
 
 
@@ -26,8 +27,10 @@ class SecondPhasePivotingEnv(gym.Env):
         # Core state
         self.basis = basis
         self.T = T
-        self.tol = 1e-9
+        self.tol = 1e-7
         self.m = self.T.shape[1] - 1
+        self._obs_clip = 1e4
+        self._nan_penalty = 100.0
         self.remove_artificial()
 
         # Limits & counters
@@ -74,6 +77,16 @@ class SecondPhasePivotingEnv(gym.Env):
 
         self.complete = False
 
+    def _zero_obs(self):
+        return {
+            "tableau": np.zeros(self.T.shape, dtype=np.float64),
+            "basis_onehot": np.zeros(self._n_vars, dtype=np.float32),
+            "reduced_costs": np.zeros(self._n_vars, dtype=np.float64),
+            "objective": np.zeros(1, dtype=np.float64),
+            "delta_objective": np.zeros(1, dtype=np.float64),
+            "nit_norm": np.zeros(1, dtype=np.float32),
+        }
+
     def _basis_key(self):
         return tuple(int(i) for i in self.basis)
 
@@ -99,6 +112,19 @@ class SecondPhasePivotingEnv(gym.Env):
         rc = tableau[-1, :-1].copy()
         obj = float(tableau[-1, -1])
         delta = float(self._last_obj - obj)
+
+        # Replace NaN/Inf, then clip to a bounded range so the NN doesn't blow up
+        c = self._obs_clip
+        np.nan_to_num(tableau, copy=False, nan=0.0, posinf=c, neginf=-c)
+        np.nan_to_num(rc, copy=False, nan=0.0, posinf=c, neginf=-c)
+        np.clip(tableau, -c, c, out=tableau)
+        np.clip(rc, -c, c, out=rc)
+        if not np.isfinite(obj):
+            obj = 0.0
+        if not np.isfinite(delta):
+            delta = 0.0
+        obj = float(np.clip(obj, -c, c))
+        delta = float(np.clip(delta, -c, c))
 
         obs = {
             "tableau": tableau,
@@ -159,6 +185,20 @@ class SecondPhasePivotingEnv(gym.Env):
         _apply_pivot(self.T, self.basis, pivrow, pivcol, tol=self.tol)
         self.nit += 1
         new_obj = float(self.T[-1, -1])
+
+        # Terminate early if tableau became numerically corrupt: discard matrix,
+        # assign a heavy negative reward, and return a zero observation so the
+        # policy/value net never sees the corrupted tableau.
+        if not np.isfinite(new_obj) or np.any(~np.isfinite(self.T)):
+            done = True
+            reward -= self._nan_penalty
+            info = {
+                "status": "numerical_error",
+                "nit": self.nit,
+                "objective": 0.0,
+                "degenerate_streak": self._degenerate_streak,
+            }
+            return self._zero_obs(), reward, done, truncated, info
 
         delta = old_obj - new_obj
         if delta > self._improve_tol:
@@ -307,6 +347,104 @@ class RandomMatrixEnv(SecondPhasePivotingEnv):
 
         print(f"Too many unstable matrices for size {self.matrix.m}x{self.matrix.n}")
         raise RuntimeError("Failed to initialize a stable Phase 2 tableau.")
+
+    def reset(self, seed=None, **kwargs):
+        self._init_env(seed)
+        self.nit = 0
+        return super().reset(seed=seed)
+
+    def step(self, action):
+        obs, reward, done, truncated, info = super().step(action)
+        info["phase1_nit"] = self._phase1_nit
+        info["total_nit"] = self._phase1_nit + self.nit
+        return obs, reward, done, truncated, info
+
+
+class LeducEnv(SecondPhasePivotingEnv):
+    """
+    Gym environment that generates sequence-form LPs from Leduc poker
+    with non-uniform deck weights, then lets the RL agent pick pivot
+    strategies in Phase 2 of the simplex method.
+    """
+
+    def __init__(self, game_name, alpha=2.0, num_ranks=3, seed=None):
+        import pyspiel
+        from leduc_experiment import build_sequence_form_matrices, sample_rank_weights
+
+        self._game = pyspiel.load_game(game_name)
+        self._alpha = alpha
+        self._num_ranks = num_ranks
+        self._build_matrices = build_sequence_form_matrices
+        self._sample_weights = sample_rank_weights
+        self._rng = np.random.default_rng(seed)
+
+        self.K = None
+        self.nit = 0
+        self._phase1_nit = 0
+
+        self._init_env()
+        super().__init__(self.T, self.basis)
+
+    def _init_env(self, seed=None):
+        self.nit = 0
+        self._phase1_nit = 0
+        max_attempts = 20
+
+        for attempt in range(max_attempts):
+            try:
+                weights = self._sample_weights(
+                    alpha=self._alpha, num_ranks=self._num_ranks, rng=self._rng
+                )
+                A, E, e, F, f, *_ = self._build_matrices(
+                    self._game, rank_weights=weights
+                )
+
+                # Build the sequence-form LP in standard form
+                n_x, n_y, n_p = A.shape[0], A.shape[1], F.shape[0]
+                c = np.concatenate([np.zeros(n_x), -f])
+                A_eq = np.hstack([E, np.zeros((E.shape[0], n_p))])
+                b_eq = e
+                A_ub = np.hstack([-A.T, F.T])
+                b_ub = np.zeros(n_y)
+                bounds = [(0, None)] * n_x + [(None, None)] * n_p
+
+                lp = _LPProblem(c, A_ub, b_ub, A_eq, b_eq, bounds, x0=None, integrality=None)
+                lp, solver_options = _parse_linprog(lp, None, meth='simplex')
+                tol = solver_options.get('tol', 1e-9)
+                A_std, b_std, c_std, c0, x0 = _get_Abc(lp, 0)
+
+                n_rows, n_cols = A_std.shape
+                neg = b_std < 0
+                A_std[neg] *= -1
+                b_std[neg] *= -1
+
+                # Phase 1 tableau
+                av = np.arange(n_rows) + n_cols
+                basis = av.copy()
+                row_constraints = np.hstack((A_std, np.eye(n_rows), b_std[:, np.newaxis]))
+                row_objective = np.hstack((c_std, np.zeros(n_rows), c0))
+                row_pseudo_objective = -row_constraints.sum(axis=0)
+                row_pseudo_objective[av] = 0
+                T = np.vstack((row_constraints, row_objective, row_pseudo_objective))
+
+                # Solve Phase 1 with fixed strategy
+                nit, status = phase1solver(T, basis, maxiter=50000)
+                if status != 0:
+                    raise RuntimeError(f"Phase 1 failed with status {status}")
+                self._phase1_nit = nit
+
+                res = first_to_second(T, basis, av)
+                if res is None:
+                    raise RuntimeError("Phase 1->2 transition failed")
+                self.T, self.basis = res
+                self.K = None
+                return
+
+            except Exception as exc:
+                print(f"[LeducEnv] Attempt {attempt + 1} failed: {exc}")
+                continue
+
+        raise RuntimeError("LeducEnv: failed to build a stable Phase 2 tableau")
 
     def reset(self, seed=None, **kwargs):
         self._init_env(seed)

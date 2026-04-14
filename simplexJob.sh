@@ -49,9 +49,9 @@ pip install --upgrade pip
 
 # --------------- Install All Dependencies Except SB3 ---------------
 if [ -f "requirements.txt" ]; then
-    grep -v '^stable_baselines3' requirements.txt > reqs_no_sb3.txt
-    pip install --no-cache-dir -r reqs_no_sb3.txt \
-      || { echo "ERROR: installing non-SB3 requirements failed"; exit 3; }
+    grep -v -E '^(stable_baselines3|torch|triton|nvidia)' requirements.txt > reqs_filtered.txt
+    pip install --no-cache-dir -r reqs_filtered.txt \
+      || { echo "ERROR: installing filtered requirements failed"; exit 3; }
 else
     echo "WARNING: requirements.txt not found—skipping non-SB3 install"
 fi

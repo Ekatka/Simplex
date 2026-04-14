@@ -1,4 +1,5 @@
 import argparse
+import importlib.util
 import numpy as np
 import json
 from collections import defaultdict
@@ -19,6 +20,14 @@ from config import (
     PIVOT_STRATEGY_NAMES, USE_TWO_PHASE,
 )
 from base_matrix import BASE_MATRIX
+
+
+def load_base_matrix_from_file(path):
+    """Load BASE_MATRIX from an arbitrary base_matrix.py file."""
+    spec = importlib.util.spec_from_file_location("custom_base_matrix", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.BASE_MATRIX
 
 MAXITER = 20_000
 TOL = 1e-9
@@ -115,17 +124,21 @@ def run_rl_agent(T, basis, model):
 # Test matrix generation
 # ---------------------------------------------------------------------------
 
-def generate_test_matrices(n_matrices, mode="in_distribution"):
+def generate_test_matrices(n_matrices, mode="in_distribution", base_matrix=None):
     """Generate a list of raw payoff matrices (np.ndarray).
 
     mode="in_distribution":  perturbations of the training base matrix.
     mode="out_of_distribution": fresh random matrices (new base each time).
+    base_matrix: optional override for the base matrix (default: BASE_MATRIX from base_matrix.py).
     """
+    if base_matrix is None:
+        base_matrix = BASE_MATRIX
+
     matrices = []
 
     if mode == "in_distribution":
         base = Matrix(m=M, n=N, min=MIN_VAL, max=MAX_VAL,
-                      epsilon=EPSILON, base_P=BASE_MATRIX)
+                      epsilon=EPSILON, base_P=base_matrix)
         for _ in range(n_matrices):
             perturbed = base.generate_perturbed_matrix()
             matrices.append(perturbed.base_P)
@@ -143,13 +156,14 @@ def generate_test_matrices(n_matrices, mode="in_distribution"):
 # Main experiment loop-
 # ---------------------------------------------------------------------------
 
-def run_experiment(n_matrices, seed):
+def run_experiment(n_matrices, seed, model_path=None, base_matrix=None):
     np.random.seed(seed)
 
-    model_path = MODEL_NAME_TEMPLATE.format(
-        steps=TIMESTEPS, m=M, n=N,
-        min=MIN_VAL, max=MAX_VAL, eps=EPSILON,
-    )
+    if model_path is None:
+        model_path = MODEL_NAME_TEMPLATE.format(
+            steps=TIMESTEPS, m=M, n=N,
+            min=MIN_VAL, max=MAX_VAL, eps=EPSILON,
+        )
     # SB3 appends .zip automatically, so strip it if present in template
     if model_path.endswith(".zip"):
         model_path = model_path[:-4]
@@ -165,7 +179,7 @@ def run_experiment(n_matrices, seed):
         print(f"  {mode.replace('_', ' ').upper()} ({n_matrices} matrices)")
         print(f"{'=' * 60}")
 
-        matrices = generate_test_matrices(n_matrices, mode=mode)
+        matrices = generate_test_matrices(n_matrices, mode=mode, base_matrix=base_matrix)
         rows = []
 
         for i, matrix_P in enumerate(matrices):
@@ -386,26 +400,30 @@ def analyze_results(results, all_methods):
 # ---------------------------------------------------------------------------
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Experiment: RL agent vs fixed pivot heuristics")
-    parser.add_argument("--n-matrices", type=int, default=200,
-                        help="Number of test matrices per test set (default: 200)")
-    parser.add_argument("--seed", type=int, default=42,
-                        help="Random seed for reproducibility (default: 42)")
-    parser.add_argument("--save", type=str, default=None,
-                        help="Save raw results to JSON file")
-    args = parser.parse_args()
+    n_matrices = 200  # Number of test matrices per test set
+    seed = 42  # Random seed for reproducibility
+    save = None  # Path to save raw results (e.g., "results.json")
+    base_matrix = "40x40results/base_matrix.py"  # Path to base_matrix.py (must define BASE_MATRIX)
+    model = "40x40results/ppo_simplex_random_20000000_matrix40x40_min-1_max1_epsilon0.001.zip" # Path to trained model (.zip)
+
+    # Load custom base matrix if specified
+    # base_matrix = None
+    if base_matrix:
+        base_matrix = load_base_matrix_from_file(base_matrix)
+        print(f"Using custom base matrix from: {base_matrix}")
 
     print(f"Matrix size: {M}x{N}")
-    print(f"Test matrices per set: {args.n_matrices}")
-    print(f"Seed: {args.seed}")
+    print(f"Test matrices per set: {n_matrices}")
+    print(f"Seed: {seed}")
     print(f"RL training strategies: {list(PIVOT_MAP.values())}")
     print(f"All tested strategies:  {list(PIVOT_MAP_TEST.values())}")
 
-    results, all_methods = run_experiment(args.n_matrices, args.seed)
+    results, all_methods = run_experiment(n_matrices, seed,
+                                          model_path=model,
+                                          base_matrix=base_matrix)
     analyze_results(results, all_methods)
 
-    if args.save:
+    if save:
         def convert(obj):
             if isinstance(obj, np.integer):
                 return int(obj)
@@ -415,9 +433,9 @@ def main():
                 return obj.tolist()
             return obj
 
-        with open(args.save, "w") as f:
+        with open(save, "w") as f:
             json.dump(results, f, default=convert, indent=2)
-        print(f"\nRaw results saved to {args.save}")
+        print(f"\nRaw results saved to {save}")
 
 
 if __name__ == "__main__":

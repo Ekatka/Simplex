@@ -1,13 +1,22 @@
 import numpy as np
+
+# Game mode: "matrix" for random matrix LPs, "leduc" for Leduc poker sequence-form LPs
+GAME_MODE = "leduc"# "matrix" or "leduc"
+
+# Leduc poker settings (only used when GAME_MODE = "leduc")
+LEDUC_GAME = "leduc_poker(suit_isomorphism=true)"  # OpenSpiel game string
+LEDUC_ALPHA = 100.0      # Dirichlet concentration: high alpha -> small perturbation around uniform
+LEDUC_NUM_RANKS = 3     # Number of card ranks (J, Q, K)
+
 # Training parameters
 M = 40
 N = 40
 
-TIMESTEPS = 12_000_000
+TIMESTEPS = 1_000_000
 
 # Checkpoint settings: save model every CHECKPOINT_FREQ steps after CHECKPOINT_START
-CHECKPOINT_START = 5_000_000
-CHECKPOINT_FREQ = 1_000_000
+CHECKPOINT_START = 500_000
+CHECKPOINT_FREQ = 500_000
 LOAD_MODEL = False
 MATRIX_MODE = "uniform" # toeplitz, uniform
 

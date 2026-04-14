@@ -7,14 +7,20 @@ import json
 import time
 from datetime import datetime
 
+import torch as th
+# Pin torch to a single thread per process: SB3 vec_env parallelism via N_ENVS
+# handles the real parallelism. Without this, PBS jobs often oversubscribe cores.
+th.set_num_threads(1)
+
 from stable_baselines3 import PPO
 from stable_baselines3.common.env_util import make_vec_env
 
-from envs import RandomMatrixEnv
+from envs import RandomMatrixEnv, LeducEnv
 from matrix import Matrix, SingleCoordinateNoiseMatrix
 from config import MATRIX_MODE, TOEPLITZ_RHO, TOEPLITZ_SIGNED, TOEPLITZ_ANTISYMMETRIC, TOEPLITZ_BAND
 from config import M, N, MIN_VAL, MAX_VAL, EPSILON, TIMESTEPS, N_ENVS, MODEL_NAME_TEMPLATE, LOAD_MODEL, PREFERRED_ACTION_ID, INITIAL_BIAS, USE_MACRO_STRATEGY, USE_BIAS_ANNEALING, USE_INITIAL_ACTION_BIAS, USE_HISTORY_TRACKING, HISTORY_SIZE, NO_IMPROVE_STEPS, CHECKPOINT_START, CHECKPOINT_FREQ
 from config import USE_SINGLE_COORDINATE_NOISE, SINGLE_COORDINATE_NOISE_FLAG, USE_TWO_PHASE
+from config import GAME_MODE, LEDUC_GAME, LEDUC_ALPHA, LEDUC_NUM_RANKS
 from base_matrix import BASE_MATRIX
 
 from wrappers import MacroStrategyWrapper
@@ -81,6 +87,7 @@ def train_single_config(matrix, learning_rate, n_steps, clip_range, run_id, tota
     model = create_ppo_model(
         vec_env, 
         n_envs=N_ENVS,
+
         learning_rate=learning_rate,
         n_steps=n_steps,
         clip_range=clip_range
@@ -251,8 +258,8 @@ def grid_search():
     return results
 
 
-def main():
-    print(f"Matrix dimensions: {M}x{N}")
+def _make_matrix_env():
+    """Create a RandomMatrixEnv for the 'matrix' game mode."""
     matrix = create_matrix()
 
     need_new_matrix = (
@@ -285,12 +292,33 @@ def main():
     else:
         print(f"Using existing {M}x{N} matrix from config")
 
-    def make_env():
-        base_env = RandomMatrixEnv(matrix)
-        if USE_MACRO_STRATEGY:
-            print("Using MacroStrategyWrapper with macro_len=10")
-            base_env = MacroStrategyWrapper(base_env, macro_len=10)
-        return TimeLimit(base_env, max_episode_steps=2000)
+    base_env = RandomMatrixEnv(matrix)
+    if USE_MACRO_STRATEGY:
+        print("Using MacroStrategyWrapper with macro_len=10")
+        base_env = MacroStrategyWrapper(base_env, macro_len=10)
+    return TimeLimit(base_env, max_episode_steps=2000)
+
+
+def _make_leduc_env():
+    """Create a LeducEnv for the 'leduc' game mode."""
+    base_env = LeducEnv(
+        game_name=LEDUC_GAME,
+        alpha=LEDUC_ALPHA,
+        num_ranks=LEDUC_NUM_RANKS,
+    )
+    if USE_MACRO_STRATEGY:
+        print("Using MacroStrategyWrapper with macro_len=10")
+        base_env = MacroStrategyWrapper(base_env, macro_len=10)
+    return TimeLimit(base_env, max_episode_steps=2000)
+
+
+def main():
+    if GAME_MODE == "leduc":
+        print(f"Game mode: LEDUC ({LEDUC_GAME}, alpha={LEDUC_ALPHA})")
+        make_env = _make_leduc_env
+    else:
+        print(f"Game mode: MATRIX ({M}x{N})")
+        make_env = _make_matrix_env
 
     vec_env = make_vec_env(make_env, n_envs=N_ENVS)
 
@@ -299,10 +327,21 @@ def main():
     if LOAD_MODEL:
         model_path = None
         if os.path.exists('models/'):
-            for file in os.listdir('models/'):
-                if file.endswith('.zip') and f'matrix{M}x{N}_min{MIN_VAL}_max{MAX_VAL}_epsilon{EPSILON}' in file:
-                    model_path = os.path.join('models', file)
-                    break
+            if GAME_MODE == "leduc":
+                # Prefer the most-recent matching Leduc model (checkpoint or final).
+                leduc_tag = f"alpha{LEDUC_ALPHA}"
+                candidates = [
+                    os.path.join('models', f)
+                    for f in os.listdir('models/')
+                    if f.endswith('.zip') and f.startswith('ppo_leduc') and leduc_tag in f
+                ]
+                if candidates:
+                    model_path = max(candidates, key=os.path.getmtime)
+            else:
+                for file in os.listdir('models/'):
+                    if file.endswith('.zip') and f'matrix{M}x{N}_min{MIN_VAL}_max{MAX_VAL}_epsilon{EPSILON}' in file:
+                        model_path = os.path.join('models', file)
+                        break
 
         if model_path and os.path.exists(model_path):
             print(f"Loading existing model from: {model_path}")
@@ -341,7 +380,10 @@ def main():
         print(f"Using HistoryTrackerCallback (history_size={HISTORY_SIZE}, no_improve_steps={NO_IMPROVE_STEPS})")
 
     # Checkpoint callback: save every CHECKPOINT_FREQ steps after CHECKPOINT_START
-    checkpoint_template = "models/ppo_checkpoint_{steps}_matrix" + f"{M}x{N}_min{MIN_VAL}_max{MAX_VAL}_epsilon{EPSILON}.zip"
+    if GAME_MODE == "leduc":
+        checkpoint_template = f"models/ppo_leduc_ckpt_{{steps}}_alpha{LEDUC_ALPHA}.zip"
+    else:
+        checkpoint_template = "models/ppo_checkpoint_{steps}_matrix" + f"{M}x{N}_min{MIN_VAL}_max{MAX_VAL}_epsilon{EPSILON}.zip"
     checkpoint_cb = CheckpointAfterCallback(
         save_path_template=checkpoint_template,
         start=CHECKPOINT_START,
@@ -352,9 +394,12 @@ def main():
 
     model.learn(total_timesteps=TIMESTEPS, callback=callbacks)
 
-    filename = MODEL_NAME_TEMPLATE.format(
-        steps=TIMESTEPS, m=M, n=N, min=MIN_VAL, max=MAX_VAL, eps=EPSILON
-    )
+    if GAME_MODE == "leduc":
+        filename = f"models/ppo_leduc_{TIMESTEPS}_alpha{LEDUC_ALPHA}.zip"
+    else:
+        filename = MODEL_NAME_TEMPLATE.format(
+            steps=TIMESTEPS, m=M, n=N, min=MIN_VAL, max=MAX_VAL, eps=EPSILON
+        )
     model.save(filename)
     print(f"Model saved as: {filename}")
 
