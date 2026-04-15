@@ -74,6 +74,10 @@ pip install --no-cache-dir gymnasium==1.0.0 \
 pip install --no-cache-dir "shimmy>=2.0" \
   || { echo "ERROR: installing shimmy failed"; exit 7; }
 
+# --------------- Install OpenSpiel (provides pyspiel) for Leduc mode ---------------
+pip install --no-cache-dir open_spiel \
+  || { echo "ERROR: installing open_spiel failed"; exit 8; }
+
 # --------------- Ensure models directory exists ---------------
 mkdir -p models
 
