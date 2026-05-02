@@ -18,46 +18,27 @@ from config import PIVOT_MAP, NUM_PIVOT_STRATEGIES
 
 
 def potential_increase(T, col_index, cost_j, tol=1e-9):
+    """Textbook greatest-improvement score for entering column `col_index`.
 
-    feasible_increases = []
-    # We skip the last row (objective row), so iterate up to T.shape[0]-1
-    for i in range(T.shape[0] - 1):
-        pivot_val = T[i, col_index]
-        if pivot_val > tol:
-            ratio = T[i, -1] / pivot_val
-            # cost_j is negative => improvement = -cost_j * ratio
-            # (since cost_j < 0, -cost_j is positive => potential improvement)
-            inc = -cost_j * ratio
-            feasible_increases.append(inc)
-
-    if feasible_increases:
-        return max(feasible_increases)
-    else:
+    Score is `-c_j * theta_j` where `theta_j = min(b_i / a_ij)` over rows
+    with a_ij > tol — the actual step the simplex takes (binding row =
+    ratio test minimum, same quantity that `_pivot_row` computes).
+    """
+    col = T[:-1, col_index]
+    mask = col > tol
+    if not np.any(mask):
         return None
+    return float(-cost_j * (T[:-1, -1][mask] / col[mask]).min())
 
-def pivot_col_random_positive_increase(T, ma, tol=1e-9):
+def pivot_col_random_edge(T, ma, tol=1e-9):
     """
-    Randomly choose a pivot column among those that yield
-    a strictly positive objective increase.
+    Textbook Random Edge rule: pick uniformly at random from columns with
+    negative reduced cost. O(|cand|) — no per-candidate ratio test.
     """
-
-    rng = np.random
-
-    cost_row = T[-1, :-1]
     col_candidates = np.ma.nonzero(ma < 0)[0]
-
-    positive_cols = []
-
-    for j in col_candidates:
-        cost_j = cost_row[j]
-        inc = potential_increase(T, j, cost_j, tol=tol)
-        if inc is not None and inc > tol:
-            positive_cols.append(j)
-
-    if not positive_cols:
+    if col_candidates.size == 0:
         return False, np.nan
-
-    return True, rng.choice(positive_cols)
+    return True, int(np.random.choice(col_candidates))
 
 
 def pivot_col_largest_increase(T, ma, tol=1e-9):
@@ -103,7 +84,7 @@ def _pivot_col_heuristics(T, strategy, tol=1e-9):
         return res, col
 
     elif strategy == 'random_edge':
-        return pivot_col_random_positive_increase(T, ma, tol)
+        return pivot_col_random_edge(T, ma, tol)
 
     elif strategy == 'steepest_edge':
         cost_row = T[-1, :-1]
@@ -226,10 +207,10 @@ def _apply_pivot(T, basis, pivrow, pivcol, tol=1e-9):
 
     basis[pivrow] = pivcol
     pivval = T[pivrow, pivcol]
-    T[pivrow] = T[pivrow] / pivval
-    for irow in range(T.shape[0]):
-        if irow != pivrow:
-            T[irow] = T[irow] - T[pivrow] * T[irow, pivcol]
+    T[pivrow] /= pivval
+    col = T[:, pivcol].copy()
+    col[pivrow] = 0.0
+    T -= np.outer(col, T[pivrow])
 
     # The selected pivot should never lead to a pivot value less than the tol.
     if np.isclose(pivval, tol, atol=0, rtol=1e4):
@@ -411,6 +392,63 @@ def first_to_second(T, basis, av):
         print("[solve_zero_sum] Phase 1 failed or LP is numerically unstable.")
         print(f"[solve_zero_sum] Pseudo-objective: {T[-1, -1]:.2e} vs adaptive_tol {adaptive_tol:.1e}, status={status}")
         return None
+
+def phase1_via_highs(A_std, b_std, c_std, c0=0.0, tol=1e-7):
+    """Solve phase 1 via scipy HiGHS, return phase-2 tableau in project format.
+
+    Uses linprog(c=0) to find a feasible vertex, extracts a basis of m LI columns
+    preferring positive-x columns, and materializes T = [B^{-1}A | B^{-1}b;
+    reduced_costs | c0 - c_B^T B^{-1} b] via sparse LU.
+    """
+    from scipy.optimize import linprog
+    from scipy.linalg import qr as sp_qr
+    from scipy.sparse import csc_matrix
+    from scipy.sparse.linalg import splu
+
+    n_rows, n_cols = A_std.shape
+
+    sol = linprog(
+        c=np.zeros(n_cols), A_eq=A_std, b_eq=b_std,
+        bounds=[(0, None)] * n_cols, method='highs',
+    )
+    if sol.status != 0:
+        raise RuntimeError(f"HiGHS phase 1 failed: status={sol.status} ({sol.message})")
+
+    x = np.maximum(sol.x, 0.0)
+    pos_idx = np.where(x > tol)[0]
+    zero_idx = np.where(x <= tol)[0]
+    if pos_idx.size > n_rows:
+        raise RuntimeError(f"HiGHS returned non-vertex: {pos_idx.size} > {n_rows}")
+
+    needed = n_rows - pos_idx.size
+    if needed > 0:
+        if pos_idx.size > 0:
+            Q_pos, _ = sp_qr(A_std[:, pos_idx], mode='economic')
+            Mz = A_std[:, zero_idx]
+            R = Mz - Q_pos @ (Q_pos.T @ Mz)
+        else:
+            R = A_std[:, zero_idx]
+        _, _, piv = sp_qr(R, pivoting=True, mode='economic')
+        basis = np.concatenate([pos_idx, zero_idx[piv[:needed]]]).astype(int)
+    else:
+        basis = pos_idx.astype(int)
+
+    B_sparse = csc_matrix(A_std[:, basis])
+    rhs = np.column_stack([A_std, b_std[:, None]])
+    lu = splu(B_sparse)
+    Binv_rhs = lu.solve(rhs)
+
+    c_B = c_std[basis]
+    reduced = c_std - c_B @ Binv_rhs[:, :-1]
+    obj_slot = c0 - c_B @ Binv_rhs[:, -1]
+
+    T = np.empty((n_rows + 1, n_cols + 1), dtype=np.float64)
+    T[:n_rows, :] = Binv_rhs
+    T[-1, :-1] = reduced
+    T[-1, -1] = obj_slot
+
+    return T, basis, int(sol.nit)
+
 
 def change_to_zero_sum_direct_phase2(GameMatrix):
     """
