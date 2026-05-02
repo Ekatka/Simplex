@@ -5,6 +5,49 @@ from stable_baselines3.common.callbacks import BaseCallback
 import torch as th
 
 
+def linear_lr_schedule(start: float, end: float):
+    """Linear schedule from `start` to `end` over the course of training.
+
+    SB3 passes progress_remaining in [1.0 -> 0.0]. Remaining=1 -> `start`,
+    remaining=0 -> `end`.
+    """
+    def schedule(progress_remaining: float) -> float:
+        return end + (start - end) * float(progress_remaining)
+    return schedule
+
+
+class SaveOnBestEpLenCallback(BaseCallback):
+    """Save the model whenever the rolling mean episode length hits a new minimum.
+
+    Uses `model.ep_info_buffer` (a deque of the last `stats_window_size` episodes).
+    Waits until `min_episodes` are available so the rolling mean isn't noisy.
+    """
+
+    def __init__(self, save_path: str, min_episodes: int = 100, verbose: int = 1):
+        super().__init__(verbose)
+        self.save_path = save_path
+        self.min_episodes = int(min_episodes)
+        self.best_mean_len = float("inf")
+
+    def _on_step(self) -> bool:
+        return True
+
+    def _on_rollout_end(self) -> None:
+        buf = getattr(self.model, "ep_info_buffer", None)
+        if buf is None or len(buf) < self.min_episodes:
+            return
+        mean_len = float(np.mean([ep["l"] for ep in buf]))
+        if mean_len < self.best_mean_len:
+            self.best_mean_len = mean_len
+            os.makedirs(os.path.dirname(self.save_path) or ".", exist_ok=True)
+            self.model.save(self.save_path)
+            if self.verbose:
+                print(
+                    f"[SaveOnBest] New best rolling ep_len={mean_len:.2f} "
+                    f"at step {self.num_timesteps} -> {self.save_path}"
+                )
+
+
 class CheckpointAfterCallback(BaseCallback):
     """Save model every `freq` steps once `start` timesteps have been reached."""
 

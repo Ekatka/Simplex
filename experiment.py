@@ -14,10 +14,11 @@ from simplex_solver import (
     _pivot_col_heuristics, _pivot_row, _apply_pivot,
 )
 from envs import SecondPhasePivotingEnv
+from wrappers import CompactObsWrapper
 from config import (
     M, N, MIN_VAL, MAX_VAL, EPSILON, TIMESTEPS,
     MODEL_NAME_TEMPLATE, PIVOT_MAP, PIVOT_MAP_TEST,
-    PIVOT_STRATEGY_NAMES, USE_TWO_PHASE,
+    PIVOT_STRATEGY_NAMES, USE_TWO_PHASE, USE_COMPACT_OBS,
 )
 from base_matrix import BASE_MATRIX
 
@@ -104,7 +105,8 @@ def run_rl_agent(T, basis, model):
 
     Returns dict with status, nit, objective.
     """
-    env = SecondPhasePivotingEnv(T.copy(), basis.copy())
+    base_env = SecondPhasePivotingEnv(T.copy(), basis.copy())
+    env = CompactObsWrapper(base_env) if USE_COMPACT_OBS else base_env
     obs, _ = env.reset()
     done = False
     truncated = False
@@ -117,7 +119,7 @@ def run_rl_agent(T, basis, model):
     if truncated and not done:
         status = "loop"
 
-    return {"status": status, "nit": env.nit, "objective": float(env.T[-1, -1])}
+    return {"status": status, "nit": base_env.nit, "objective": float(base_env.T[-1, -1])}
 
 
 # ---------------------------------------------------------------------------
@@ -400,11 +402,12 @@ def analyze_results(results, all_methods):
 # ---------------------------------------------------------------------------
 
 def main():
+
     n_matrices = 200  # Number of test matrices per test set
     seed = 42  # Random seed for reproducibility
     save = None  # Path to save raw results (e.g., "results.json")
-    base_matrix = "40x40results/base_matrix.py"  # Path to base_matrix.py (must define BASE_MATRIX)
-    model = "40x40results/ppo_simplex_random_20000000_matrix40x40_min-1_max1_epsilon0.001.zip" # Path to trained model (.zip)
+    base_matrix = None  # Path to base_matrix.py, or None to use current base_matrix.py
+    model = MODEL_NAME_TEMPLATE.format(steps=TIMESTEPS, m=M, n=N, min=MIN_VAL, max=MAX_VAL, eps=EPSILON)
 
     # Load custom base matrix if specified
     # base_matrix = None

@@ -15,16 +15,17 @@ th.set_num_threads(1)
 from stable_baselines3 import PPO
 from stable_baselines3.common.env_util import make_vec_env
 
-from envs import RandomMatrixEnv, LeducEnv
+from envs import RandomMatrixEnv, LeducEnv, FullPivotEnv, LeducFullPivotEnv, CubeEnv
 from matrix import Matrix, SingleCoordinateNoiseMatrix
 from config import MATRIX_MODE, TOEPLITZ_RHO, TOEPLITZ_SIGNED, TOEPLITZ_ANTISYMMETRIC, TOEPLITZ_BAND
 from config import M, N, MIN_VAL, MAX_VAL, EPSILON, TIMESTEPS, N_ENVS, MODEL_NAME_TEMPLATE, LOAD_MODEL, PREFERRED_ACTION_ID, INITIAL_BIAS, USE_MACRO_STRATEGY, USE_BIAS_ANNEALING, USE_INITIAL_ACTION_BIAS, USE_HISTORY_TRACKING, HISTORY_SIZE, NO_IMPROVE_STEPS, CHECKPOINT_START, CHECKPOINT_FREQ
-from config import USE_SINGLE_COORDINATE_NOISE, SINGLE_COORDINATE_NOISE_FLAG, USE_TWO_PHASE
+from config import USE_SINGLE_COORDINATE_NOISE, SINGLE_COORDINATE_NOISE_FLAG, USE_TWO_PHASE, USE_COMPACT_OBS, USE_BASELINE_REWARD, BASELINE_REWARD_COEF, BASELINE_REWARD_WINS_ONLY, USE_FULL_PIVOT, ENT_COEF, SWITCH_BONUS, USE_LR_DECAY
 from config import GAME_MODE, LEDUC_GAME, LEDUC_ALPHA, LEDUC_NUM_RANKS
+from config import CUBE_N
 from base_matrix import BASE_MATRIX
 
-from wrappers import MacroStrategyWrapper
-from callbacks import EpisodeCounterCallback, LogitBiasAnnealCallback, HistoryTrackerCallback, CheckpointAfterCallback
+from wrappers import MacroStrategyWrapper, CompactObsWrapper, BaselineRewardWrapper, SwitchBonusWrapper
+from callbacks import EpisodeCounterCallback, LogitBiasAnnealCallback, HistoryTrackerCallback, CheckpointAfterCallback, SaveOnBestEpLenCallback, linear_lr_schedule
 from io_utils import update_base_matrix
 
 
@@ -54,15 +55,17 @@ def create_ppo_model(vec_env, verbose=1, n_envs=1, learning_rate=1e-4, n_steps=5
     policy_kwargs = dict(
         net_arch=dict(pi=[256, 256], vf=[256, 256])
     )
+    policy_cls = "MlpPolicy" if (USE_COMPACT_OBS or USE_FULL_PIVOT) else "MultiInputPolicy"
+    lr = linear_lr_schedule(start=learning_rate, end=learning_rate * 0.1) if USE_LR_DECAY else learning_rate
     return PPO(
-        "MultiInputPolicy",
+        policy_cls,
         vec_env,
         verbose=verbose,
         gamma=0.995,
         n_steps=n_steps,
         batch_size=max(64, 2048//max(1, n_envs)),
-        ent_coef=0.01,
-        learning_rate=learning_rate,
+        ent_coef=ENT_COEF,
+        learning_rate=lr,
         clip_range=clip_range,
         policy_kwargs=policy_kwargs
     )
@@ -80,6 +83,10 @@ def train_single_config(matrix, learning_rate, n_steps, clip_range, run_id, tota
         base_env = RandomMatrixEnv(matrix)
         if USE_MACRO_STRATEGY:
             base_env = MacroStrategyWrapper(base_env, macro_len=10)
+        if USE_BASELINE_REWARD:
+            base_env = BaselineRewardWrapper(base_env, baseline_strategy='steepest_edge', coef=BASELINE_REWARD_COEF, wins_only=BASELINE_REWARD_WINS_ONLY)
+        if USE_COMPACT_OBS:
+            base_env = CompactObsWrapper(base_env)
         return TimeLimit(base_env, max_episode_steps=2000)
 
     vec_env = make_vec_env(make_env, n_envs=N_ENVS)
@@ -292,15 +299,59 @@ def _make_matrix_env():
     else:
         print(f"Using existing {M}x{N} matrix from config")
 
+    if USE_FULL_PIVOT:
+        print("Using FullPivotEnv (agent plays BOTH phases)")
+        base_env = FullPivotEnv(
+            matrix, use_baseline=USE_BASELINE_REWARD,
+            baseline_coef=BASELINE_REWARD_COEF, switch_bonus=SWITCH_BONUS,
+        )
+        return TimeLimit(base_env, max_episode_steps=4000)
+
     base_env = RandomMatrixEnv(matrix)
     if USE_MACRO_STRATEGY:
         print("Using MacroStrategyWrapper with macro_len=10")
         base_env = MacroStrategyWrapper(base_env, macro_len=10)
+    if SWITCH_BONUS > 0:
+        print(f"Using SwitchBonusWrapper with bonus={SWITCH_BONUS}")
+        base_env = SwitchBonusWrapper(base_env, bonus=SWITCH_BONUS)
+    if USE_BASELINE_REWARD:
+        base_env = BaselineRewardWrapper(base_env, baseline_strategy='steepest_edge', coef=BASELINE_REWARD_COEF, wins_only=BASELINE_REWARD_WINS_ONLY)
+    if USE_COMPACT_OBS:
+        base_env = CompactObsWrapper(base_env)
     return TimeLimit(base_env, max_episode_steps=2000)
+
+
+def _make_cubes_env():
+    """Create a CubeEnv wrapped appropriately for phase-2 cube training.
+
+    The cubes LP formulation has no Phase 1 (origin is feasible with slacks
+    basic), so `USE_FULL_PIVOT` is ignored here. `USE_COMPACT_OBS=False`
+    yields the Dict observation (full tableau) — the first experiment the
+    user asked for. Flip the flag to True for the size-independent version.
+    """
+    base_env = CubeEnv(n=CUBE_N)
+    if USE_MACRO_STRATEGY:
+        print("Using MacroStrategyWrapper with macro_len=10")
+        base_env = MacroStrategyWrapper(base_env, macro_len=10)
+    if USE_BASELINE_REWARD:
+        base_env = BaselineRewardWrapper(base_env, baseline_strategy='steepest_edge', coef=BASELINE_REWARD_COEF, wins_only=BASELINE_REWARD_WINS_ONLY)
+    if USE_COMPACT_OBS:
+        base_env = CompactObsWrapper(base_env)
+    # Cube pivot counts can explode (2^n ~ 1024 for n=10), so allow more steps
+    return TimeLimit(base_env, max_episode_steps=20_000)
 
 
 def _make_leduc_env():
     """Create a LeducEnv for the 'leduc' game mode."""
+    if USE_FULL_PIVOT:
+        print("Using LeducFullPivotEnv (agent plays BOTH phases)")
+        base_env = LeducFullPivotEnv(
+            game_name=LEDUC_GAME, alpha=LEDUC_ALPHA, num_ranks=LEDUC_NUM_RANKS,
+            use_baseline=USE_BASELINE_REWARD, baseline_coef=BASELINE_REWARD_COEF,
+            switch_bonus=SWITCH_BONUS,
+        )
+        return TimeLimit(base_env, max_episode_steps=20_000)
+
     base_env = LeducEnv(
         game_name=LEDUC_GAME,
         alpha=LEDUC_ALPHA,
@@ -309,6 +360,10 @@ def _make_leduc_env():
     if USE_MACRO_STRATEGY:
         print("Using MacroStrategyWrapper with macro_len=10")
         base_env = MacroStrategyWrapper(base_env, macro_len=10)
+    if USE_BASELINE_REWARD:
+        base_env = BaselineRewardWrapper(base_env, baseline_strategy='steepest_edge', coef=BASELINE_REWARD_COEF, wins_only=BASELINE_REWARD_WINS_ONLY)
+    if USE_COMPACT_OBS:
+        base_env = CompactObsWrapper(base_env)
     return TimeLimit(base_env, max_episode_steps=2000)
 
 
@@ -316,6 +371,9 @@ def main():
     if GAME_MODE == "leduc":
         print(f"Game mode: LEDUC ({LEDUC_GAME}, alpha={LEDUC_ALPHA})")
         make_env = _make_leduc_env
+    elif GAME_MODE == "cubes":
+        print(f"Game mode: CUBES (n={CUBE_N}, full_tableau={not USE_COMPACT_OBS})")
+        make_env = _make_cubes_env
     else:
         print(f"Game mode: MATRIX ({M}x{N})")
         make_env = _make_matrix_env
@@ -334,6 +392,15 @@ def main():
                     os.path.join('models', f)
                     for f in os.listdir('models/')
                     if f.endswith('.zip') and f.startswith('ppo_leduc') and leduc_tag in f
+                ]
+                if candidates:
+                    model_path = max(candidates, key=os.path.getmtime)
+            elif GAME_MODE == "cubes":
+                cubes_tag = f"n{CUBE_N}"
+                candidates = [
+                    os.path.join('models', f)
+                    for f in os.listdir('models/')
+                    if f.endswith('.zip') and f.startswith('ppo_cubes') and cubes_tag in f
                 ]
                 if candidates:
                     model_path = max(candidates, key=os.path.getmtime)
@@ -380,8 +447,11 @@ def main():
         print(f"Using HistoryTrackerCallback (history_size={HISTORY_SIZE}, no_improve_steps={NO_IMPROVE_STEPS})")
 
     # Checkpoint callback: save every CHECKPOINT_FREQ steps after CHECKPOINT_START
+    obs_tag = "compact" if USE_COMPACT_OBS else "full"
     if GAME_MODE == "leduc":
         checkpoint_template = f"models/ppo_leduc_ckpt_{{steps}}_alpha{LEDUC_ALPHA}.zip"
+    elif GAME_MODE == "cubes":
+        checkpoint_template = f"models/ppo_cubes_ckpt_{{steps}}_n{CUBE_N}_{obs_tag}.zip"
     else:
         checkpoint_template = "models/ppo_checkpoint_{steps}_matrix" + f"{M}x{N}_min{MIN_VAL}_max{MAX_VAL}_epsilon{EPSILON}.zip"
     checkpoint_cb = CheckpointAfterCallback(
@@ -392,10 +462,22 @@ def main():
     callbacks.append(checkpoint_cb)
     print(f"Checkpointing enabled: every {CHECKPOINT_FREQ:,} steps after {CHECKPOINT_START:,}")
 
+    # Save-on-best callback: save whenever rolling mean ep_len hits a new minimum
+    if GAME_MODE == "leduc":
+        best_path = f"models/ppo_leduc_best_alpha{LEDUC_ALPHA}.zip"
+    elif GAME_MODE == "cubes":
+        best_path = f"models/ppo_cubes_best_n{CUBE_N}_{obs_tag}.zip"
+    else:
+        best_path = f"models/ppo_best_matrix{M}x{N}_min{MIN_VAL}_max{MAX_VAL}_epsilon{EPSILON}.zip"
+    callbacks.append(SaveOnBestEpLenCallback(save_path=best_path, min_episodes=100))
+    print(f"Save-on-best enabled -> {best_path}")
+
     model.learn(total_timesteps=TIMESTEPS, callback=callbacks)
 
     if GAME_MODE == "leduc":
         filename = f"models/ppo_leduc_{TIMESTEPS}_alpha{LEDUC_ALPHA}.zip"
+    elif GAME_MODE == "cubes":
+        filename = f"models/ppo_cubes_{TIMESTEPS}_n{CUBE_N}_{obs_tag}.zip"
     else:
         filename = MODEL_NAME_TEMPLATE.format(
             steps=TIMESTEPS, m=M, n=N, min=MIN_VAL, max=MAX_VAL, eps=EPSILON
