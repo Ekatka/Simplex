@@ -85,14 +85,14 @@ USE_BIAS_ANNEALING = False # Set to True to use LogitBiasAnnealCallback
 USE_INITIAL_ACTION_BIAS = False
 
 # History tracking feature
-USE_COMPACT_OBS = True  # Wrap env with CompactObsWrapper (31 size-independent features)
-USE_BASELINE_REWARD = True  # Shape reward by difference from baseline (steepest_edge) iter count
+USE_COMPACT_OBS = False  # Wrap env with CompactObsWrapper (31 size-independent features)
+USE_BASELINE_REWARD = False  # Shape reward by difference from baseline (steepest_edge) iter count
 BASELINE_REWARD_COEF = 2.0  # Multiplier for (baseline_nit - agent_nit) terminal bonus — amplified to push past "tie with steepest"
-BASELINE_REWARD_WINS_ONLY = True  # If True, only reward strict wins vs baseline (no penalty for losing) — removes the "imitate steepest to avoid losses" equilibrium
+BASELINE_REWARD_WINS_ONLY = False  # If True, only reward strict wins vs baseline (no penalty for losing) — removes the "imitate steepest to avoid losses" equilibrium
 USE_FULL_PIVOT = False  # Agent plays BOTH phases (True) or just phase 2 (False); ignored for cubes
 USE_LR_DECAY = False  # Linear decay of learning rate (1e-4 -> 1e-5) over the run
 ENT_COEF = 0.05  # PPO entropy coefficient (higher = more exploration / action diversity)
-SWITCH_BONUS = 0.3  # Per-step reward for picking a different action than previous — encourages strategy diversity
+SWITCH_BONUS = 0  # Per-step reward for picking a different action than previous — encourages strategy diversity
 USE_HISTORY_TRACKING = False  # Enable history tracking and printing when objective doesn't improve
 HISTORY_SIZE = 20  # Number of last steps to keep in history
 NO_IMPROVE_STEPS = 100  # Number of steps without improvement before printing history
@@ -105,7 +105,7 @@ SINGLE_COORDINATE_NOISE_FLAG = False  # When USE_SINGLE_COORDINATE_NOISE=True, t
 # then transition to Phase 2 for the RL agent. When False, construct
 # the Phase 2 tableau directly (skipping Phase 1).
 # NOTE: the two modes produce different tableau shapes, so models are NOT interchangeable.
-USE_TWO_PHASE = True
+USE_TWO_PHASE = False
 
 # Weighted step penalty: scale the per-step penalty by the empirical cost of
 # the chosen pivot rule (calibrate via benchmark_pivot_cost.py).
