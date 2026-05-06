@@ -29,7 +29,7 @@ TIMESTEPS = 20_000_000
 
 # Checkpoint settings: save model every CHECKPOINT_FREQ steps after CHECKPOINT_START
 CHECKPOINT_START = 1_000_000
-CHECKPOINT_FREQ = 1_00_000
+CHECKPOINT_FREQ = 1_000_000
 LOAD_MODEL = False
 MATRIX_MODE = "toeplitz" # toeplitz, uniform
 
@@ -47,13 +47,22 @@ TOEPLITZ_BAND = None
 # EPSILON used in both
 EPSILON = 0.001
 
+# Perturbation magnitude used by experiment.py when generating in-distribution
+# test matrices. Defaults to EPSILON so the test set matches the training
+# distribution. Set to a different value to probe how the agent generalizes
+# to larger or smaller perturbations than it was trained on (the saved model's
+# filename / training epsilon is unaffected).
+TEST_EPSILON = 0.1
+
 PREFERRED_ACTION_ID = 2
 INITIAL_BIAS = 3.0
 
 # Training settings
 N_ENVS = 4
-# Model save path template
-MODEL_NAME_TEMPLATE = "models/ppo_simplex_random_{steps}_matrix{m}x{n}_min{min}_max{max}_epsilon{eps}.zip"
+
+# (MODEL_NAME_TEMPLATE is defined further down, after USE_COMPACT_OBS and
+# USE_WEIGHTED_STEP_PENALTY are set, so it can include obs/penalty tags
+# automatically.)
 
 # Max BFS depth
 BFS_DEPTH = 10
@@ -110,16 +119,17 @@ USE_TWO_PHASE = False
 # Weighted step penalty: scale the per-step penalty by the empirical cost of
 # the chosen pivot rule (calibrate via benchmark_pivot_cost.py).
 # When False, every step costs -1 regardless of strategy (current behavior).
-USE_WEIGHTED_STEP_PENALTY = False
+USE_WEIGHTED_STEP_PENALTY = True
 # Calibrated by benchmark_pivot_cost.py at 40x40 (matrix mode, phase 2),
 # normalized so largest_coefficient = 1.0. Re-run the benchmark and update
 # these if you change PIVOT_MAP or train at a different size/mode.
+
 STEP_PENALTY_WEIGHTS = {
     'largest_coefficient': 1.00,
-    'steepest_edge':       1.72,
-    'largest_increase':    2.70,
-    'random_edge':         0.86,
-    'blands_rule':         0.37,
+    'steepest_edge': 1.5,
+    'largest_increase': 2.5,
+    'random_edge': 0.80,
+    'blands_rule': 0.35,
 }
 
 # Scale the per-step penalty linearly with tableau row count so the same
@@ -127,4 +137,20 @@ STEP_PENALTY_WEIGHTS = {
 # phase-2 tableau (≈ 41 rows). Adjust if you train at a different size.
 SCALE_PENALTY_BY_SIZE = False
 REFERENCE_TABLEAU_ROWS = M + 1
+
+
+# Run tag derived from observation-space and step-penalty flags so each
+# training configuration writes to a unique model filename. Examples:
+#   USE_COMPACT_OBS=False, USE_WEIGHTED_STEP_PENALTY=True  -> "dict_weighted"
+#   USE_COMPACT_OBS=True,  USE_WEIGHTED_STEP_PENALTY=False -> "compact_unweighted"
+_OBS_TAG = "compact" if USE_COMPACT_OBS else "dict"
+_PEN_TAG = "weighted" if USE_WEIGHTED_STEP_PENALTY else "unweighted"
+MODEL_RUN_TAG = f"{_OBS_TAG}_{_PEN_TAG}"
+
+# Model save path template — uses MODEL_RUN_TAG so different obs/penalty
+# combinations don't overwrite each other's saved models.
+MODEL_NAME_TEMPLATE = (
+    f"models/ppo_simplex_random_{{steps}}_matrix{{m}}x{{n}}"
+    f"_min{{min}}_max{{max}}_epsilon{{eps}}_{MODEL_RUN_TAG}.zip"
+)
 

@@ -453,7 +453,9 @@ def main():
     elif GAME_MODE == "cubes":
         checkpoint_template = f"models/ppo_cubes_ckpt_{{steps}}_n{CUBE_N}_{obs_tag}.zip"
     else:
-        checkpoint_template = "models/ppo_checkpoint_{steps}_matrix" + f"{M}x{N}_min{MIN_VAL}_max{MAX_VAL}_epsilon{EPSILON}.zip"
+        from config import MODEL_RUN_TAG
+        checkpoint_template = ("models/ppo_checkpoint_{steps}_matrix"
+                               + f"{M}x{N}_min{MIN_VAL}_max{MAX_VAL}_epsilon{EPSILON}_{MODEL_RUN_TAG}.zip")
     checkpoint_cb = CheckpointAfterCallback(
         save_path_template=checkpoint_template,
         start=CHECKPOINT_START,
@@ -468,7 +470,8 @@ def main():
     elif GAME_MODE == "cubes":
         best_path = f"models/ppo_cubes_best_n{CUBE_N}_{obs_tag}.zip"
     else:
-        best_path = f"models/ppo_best_matrix{M}x{N}_min{MIN_VAL}_max{MAX_VAL}_epsilon{EPSILON}.zip"
+        from config import MODEL_RUN_TAG
+        best_path = f"models/ppo_best_matrix{M}x{N}_min{MIN_VAL}_max{MAX_VAL}_epsilon{EPSILON}_{MODEL_RUN_TAG}.zip"
     callbacks.append(SaveOnBestEpLenCallback(save_path=best_path, min_episodes=100))
     print(f"Save-on-best enabled -> {best_path}")
 
