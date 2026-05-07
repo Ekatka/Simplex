@@ -386,12 +386,17 @@ def main():
         model_path = None
         if os.path.exists('models/'):
             if GAME_MODE == "leduc":
-                # Prefer the most-recent matching Leduc model (checkpoint or final).
+                # Prefer the most-recent matching Leduc model for the active
+                # alpha + run-tag (obs/penalty combo) combination.
+                from config import MODEL_RUN_TAG
                 leduc_tag = f"alpha{LEDUC_ALPHA}"
                 candidates = [
                     os.path.join('models', f)
                     for f in os.listdir('models/')
-                    if f.endswith('.zip') and f.startswith('ppo_leduc') and leduc_tag in f
+                    if (f.endswith('.zip')
+                        and f.startswith('ppo_leduc')
+                        and leduc_tag in f
+                        and MODEL_RUN_TAG in f)
                 ]
                 if candidates:
                     model_path = max(candidates, key=os.path.getmtime)
@@ -449,7 +454,8 @@ def main():
     # Checkpoint callback: save every CHECKPOINT_FREQ steps after CHECKPOINT_START
     obs_tag = "compact" if USE_COMPACT_OBS else "full"
     if GAME_MODE == "leduc":
-        checkpoint_template = f"models/ppo_leduc_ckpt_{{steps}}_alpha{LEDUC_ALPHA}.zip"
+        from config import MODEL_RUN_TAG
+        checkpoint_template = f"models/ppo_leduc_ckpt_{{steps}}_alpha{LEDUC_ALPHA}_{MODEL_RUN_TAG}.zip"
     elif GAME_MODE == "cubes":
         checkpoint_template = f"models/ppo_cubes_ckpt_{{steps}}_n{CUBE_N}_{obs_tag}.zip"
     else:
@@ -466,7 +472,8 @@ def main():
 
     # Save-on-best callback: save whenever rolling mean ep_len hits a new minimum
     if GAME_MODE == "leduc":
-        best_path = f"models/ppo_leduc_best_alpha{LEDUC_ALPHA}.zip"
+        from config import MODEL_RUN_TAG
+        best_path = f"models/ppo_leduc_best_alpha{LEDUC_ALPHA}_{MODEL_RUN_TAG}.zip"
     elif GAME_MODE == "cubes":
         best_path = f"models/ppo_cubes_best_n{CUBE_N}_{obs_tag}.zip"
     else:
@@ -478,7 +485,8 @@ def main():
     model.learn(total_timesteps=TIMESTEPS, callback=callbacks)
 
     if GAME_MODE == "leduc":
-        filename = f"models/ppo_leduc_{TIMESTEPS}_alpha{LEDUC_ALPHA}.zip"
+        from config import MODEL_RUN_TAG
+        filename = f"models/ppo_leduc_{TIMESTEPS}_alpha{LEDUC_ALPHA}_{MODEL_RUN_TAG}.zip"
     elif GAME_MODE == "cubes":
         filename = f"models/ppo_cubes_{TIMESTEPS}_n{CUBE_N}_{obs_tag}.zip"
     else:

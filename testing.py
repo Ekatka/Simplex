@@ -225,14 +225,15 @@ def test_rl(matrix: Matrix):
     # print(pd.DataFrame(matrix.base_P).to_string(index=False, header=False))
     # print(matrix.base_P.tolist())
 
-    model_path = MODEL_NAME_TEMPLATE.format(
-        steps=TIMESTEPS,
-        m=M,
-        n=N,
-        min=MIN_VAL,
-        max=MAX_VAL,
-        eps=EPSILON
-    )
+    # model_path = MODEL_NAME_TEMPLATE.format(
+    #     steps=TIMESTEPS,
+    #     m=M,
+    #     n=N,
+    #     min=MIN_VAL,
+    #     max=MAX_VAL,
+    #     eps=EPSILON
+    # )
+    model_path = "40x40results/ppo_simplex_random_20000000_matrix40x40_min-1_max1_epsilon0.001.zip"
 
     env = RandomMatrixEnv(matrix)
     model = PPO.load(model_path)
@@ -243,7 +244,7 @@ def test_rl(matrix: Matrix):
     while not done and not truncated:
 
         action, _ = model.predict(obs, deterministic=True)
-        # print(f"[RL] Action: {PIVOT_MAP[int(action)]}")
+        print(f"[RL] Action: {PIVOT_MAP[int(action)]}")
         obs, _, done, truncated, _ = env.step(action)
 
     # Extract strategies
