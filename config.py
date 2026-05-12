@@ -52,7 +52,7 @@ EPSILON = 0.001
 # distribution. Set to a different value to probe how the agent generalizes
 # to larger or smaller perturbations than it was trained on (the saved model's
 # filename / training epsilon is unaffected).
-TEST_EPSILON = EPSILON
+TEST_EPSILON = 0.001
 
 PREFERRED_ACTION_ID = 2
 INITIAL_BIAS = 3.0
@@ -130,24 +130,31 @@ USE_WEIGHTED_STEP_PENALTY = True
 # Re-run the matching benchmark if you change PIVOT_MAP or the simplex
 # internals.
 #
-# Calibrated by benchmark_pivot_cost.py at 40x40 (matrix mode, phase 2):
+# Calibrated for TOTAL per-pivot wallclock on a 40x40 matrix-mode phase-2
+# tableau (~42x83): col-select + row-select + apply-pivot. At this size
+# apply-pivot is only ~10us (the tableau fits in cache), so col-select is the
+# dominant cost — the old col-only ratios (1 / 1.5 / 2.5 / 0.8 / 0.35) were
+# close but slightly understated SE and LI, and Bland's was way too cheap
+# (the old 0.35 ignored the fixed row+apply costs every rule pays).
 STEP_PENALTY_WEIGHTS_MATRIX = {
     'largest_coefficient': 1.00,
-    'steepest_edge':       1.50,
-    'largest_increase':    2.50,
-    'random_edge':         0.80,
-    'blands_rule':         0.35,
+    'steepest_edge':       1.89,
+    'largest_increase':    3.17,
+    'random_edge':         0.90,
+    'blands_rule':         0.66,
 }
-# Calibrated by benchmark_pivot_cost_leduc.py at the Leduc poker phase-2
-# tableau (~483x965). Steepest_edge and largest_increase are far more
-# expensive on Leduc than at 40x40 because the per-column work scales with
-# row count.
+# Calibrated for TOTAL per-pivot wallclock on the Leduc phase-2 tableau
+# (~483x965): col-select + row-select + apply-pivot. Apply-pivot is a
+# ~234us memory-bandwidth-bound op that every rule pays equally, so the
+# realistic wallclock ratios across rules are far gentler than the
+# col-select-only ratios (the previous calibration: 1 / 9.5 / 20 / 0.8 / 0.4).
+# Re-measure if the simplex inner loop or the LP size changes meaningfully.
 STEP_PENALTY_WEIGHTS_LEDUC = {
     'largest_coefficient': 1.00,
-    'steepest_edge':       9.5,
-    'largest_increase':   20,
-    'random_edge':         0.8,
-    'blands_rule':         0.4,
+    'steepest_edge':       1.85,
+    'largest_increase':    2.95,
+    'random_edge':         0.98,
+    'blands_rule':         0.95,
 }
 # Active dict — auto-picked from GAME_MODE so envs.py / experiment scripts
 # don't need to know the mode.
