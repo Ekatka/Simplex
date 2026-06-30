@@ -78,6 +78,18 @@ pip install --no-cache-dir "shimmy>=2.0" \
 pip install --no-cache-dir open_spiel \
   || { echo "ERROR: installing open_spiel failed"; exit 8; }
 
+# --------------- Pin numpy<2 (SB3 2.4.1 is not numpy-2 compatible) ---------------
+# open_spiel / other deps may pull numpy>=2; force a compatible version LAST so
+# it wins, otherwise SB3 breaks at runtime ("numpy 2.x is incompatible").
+pip install --no-cache-dir "numpy<2.0" \
+  || { echo "ERROR: pinning numpy<2 failed"; exit 9; }
+
+# --------------- Verify the leduc-mode import actually works ---------------
+# Guards against a stale job copy / silently-skipped install: fail HERE with a
+# clear message instead of crashing 40 lines into env construction.
+python3 -c "import pyspiel; import numpy; assert numpy.__version__ < '2', numpy.__version__" \
+  || { echo "ERROR: pyspiel/numpy sanity import failed"; exit 10; }
+
 # --------------- Ensure models directory exists ---------------
 mkdir -p models
 
