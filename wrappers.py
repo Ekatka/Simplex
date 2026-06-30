@@ -208,6 +208,43 @@ class CompactObsWrapper(gym.ObservationWrapper):
 
         return feats
 
+
+class EmptyObsWrapper(gym.ObservationWrapper):
+    """Information-free observation — a single constant feature (always 0.0).
+
+    Sanity-check baseline: the policy receives the SAME observation at every
+    step of every episode, so it is forced to be state-independent. It can
+    only learn one fixed action distribution (effectively "which single pivot
+    rule is best on average"), never a per-state choice.
+
+    If an agent trained with this wrapper matches a CompactObs agent, that is
+    evidence the CompactObs agent wasn't actually using the tableau features —
+    it had just collapsed to a fixed rule anyway.
+
+    A constant length-1 vector is used rather than a genuinely zero-length
+    (shape=(0,)) Box: information-wise they are identical (a constant input
+    feeds only the first layer's bias), but the length-1 form avoids degenerate
+    0-feature linear layers and SB3/Gym empty-array edge cases.
+    """
+
+    def __init__(self, env):
+        super().__init__(env)
+        self.observation_space = spaces.Box(
+            low=0.0, high=0.0, shape=(1,), dtype=np.float32
+        )
+
+    def reset(self, **kwargs):
+        _, info = self.env.reset(**kwargs)
+        return self.observation(None), info
+
+    def step(self, action):
+        _, reward, done, truncated, info = self.env.step(action)
+        return self.observation(None), reward, done, truncated, info
+
+    def observation(self, obs):
+        return np.zeros(1, dtype=np.float32)
+
+
 # Currently not used
 class EarlyStopWrapper(gym.Wrapper):
     def __init__(self, env, max_degenerate_streak=100, window=200, improve_tol=1e-12):

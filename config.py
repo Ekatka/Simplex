@@ -25,7 +25,7 @@ M = 40
 N = 40
 
 
-TIMESTEPS = 20_000_000
+TIMESTEPS = 5_000_000
 
 # Checkpoint settings: save model every CHECKPOINT_FREQ steps after CHECKPOINT_START
 CHECKPOINT_START = 1_000_000
@@ -99,12 +99,22 @@ USE_COMPACT_OBS = False  # Wrap env with CompactObsWrapper (31 size-independent 
 # in the input layer and a 500MB+ saved model. Force compact obs for Leduc.
 if GAME_MODE == "leduc":
     USE_COMPACT_OBS = True
+# Sanity-check baseline: replace the observation with a single constant feature
+# (information-free). The policy is forced to be state-independent and can only
+# learn one fixed pivot rule. If this matches the compact-obs agent, the agent
+# wasn't using the tableau. Takes precedence over USE_COMPACT_OBS when True.
+USE_EMPTY_OBS = True
 USE_BASELINE_REWARD = False  # Shape reward by difference from baseline (steepest_edge) iter count
 BASELINE_REWARD_COEF = 2.0  # Multiplier for (baseline_nit - agent_nit) terminal bonus — amplified to push past "tie with steepest"
 BASELINE_REWARD_WINS_ONLY = False  # If True, only reward strict wins vs baseline (no penalty for losing) — removes the "imitate steepest to avoid losses" equilibrium
 USE_FULL_PIVOT = False  # Agent plays BOTH phases (True) or just phase 2 (False); ignored for cubes
 USE_LR_DECAY = False  # Linear decay of learning rate (1e-4 -> 1e-5) over the run
 ENT_COEF = 0.05  # PPO entropy coefficient (higher = more exploration / action diversity)
+# PPO discount factor. Effective horizon ~ 1/(1-GAMMA). Note Leduc phase-2
+# episodes run ~280-480 pivots, so the default 0.995 (horizon ~200) is SHORTER
+# than the episode — raise toward 0.999 (horizon ~1000) if you need the terminal
+# success bonus / total-pivot-count signal to actually propagate.
+GAMMA = 0.999
 SWITCH_BONUS = 0  # Per-step reward for picking a different action than previous — encourages strategy diversity
 USE_HISTORY_TRACKING = False  # Enable history tracking and printing when objective doesn't improve
 HISTORY_SIZE = 20  # Number of last steps to keep in history
@@ -172,7 +182,7 @@ REFERENCE_TABLEAU_ROWS = M + 1
 # training configuration writes to a unique model filename. Examples:
 #   USE_COMPACT_OBS=False, USE_WEIGHTED_STEP_PENALTY=True  -> "dict_weighted"
 #   USE_COMPACT_OBS=True,  USE_WEIGHTED_STEP_PENALTY=False -> "compact_unweighted"
-_OBS_TAG = "compact" if USE_COMPACT_OBS else "dict"
+_OBS_TAG = "empty" if USE_EMPTY_OBS else ("compact" if USE_COMPACT_OBS else "dict")
 _PEN_TAG = "weighted" if USE_WEIGHTED_STEP_PENALTY else "unweighted"
 MODEL_RUN_TAG = f"{_OBS_TAG}_{_PEN_TAG}"
 

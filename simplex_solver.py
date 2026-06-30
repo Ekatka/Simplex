@@ -573,7 +573,8 @@ def build_phase2_tableau_canonical(A, b, c, basis, tol=1e-12):
         np.hstack([obj_row, np.array([z0])])
     ])
 
-    # Tiny cleanup: zero-out near-zeros for numerical neatness
+    # Tiny cleanup: zero-out near
+    # -zeros for numerical neatness
     T[np.abs(T) < tol] = 0.0
     return T, basis
 
